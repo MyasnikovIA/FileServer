@@ -709,9 +709,30 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
             }
         };
     };
+    // ============================================================
+    // Получаем текущий выбранный элемент — нужен для пункта
+    // «Открыть в новом окне».
+    // ============================================================
+    const getSelectedItem = function () {
+        const c = FAR.side[side];
+        if (!c) return null;
+        if (c.selectedIdx.size === 0) return null;
+        const firstIdx = Array.from(c.selectedIdx).sort(function (a, b) { return a - b; })[0];
+        const files = c.files || [];
+        return files[firstIdx] || null;
+    };
+
+    const selectedItem = getSelectedItem();
+    const canOpenInNewWindow = hasDb && selectedItem && !selectedItem.isFolder;
+
+
 
     add('📤 Загрузить',     hasDb, withSide(function () { FAR.uploadFile(); }));
     add('📁 Создать папку', hasDb, withSide(function () { FAR.createFolder(); }));
+    add('🪟 Открыть в новом окне', canOpenInNewWindow, withSide(function () {
+        const it = getSelectedItem();
+        if (it) FAR.openFileInNewWindow(it, side);
+    }));
     addSep();
     add('📋 Копировать',    hasDb && selCount > 0, withSide(function () { FAR.copySelected(); }));
     add('✂️ Перенести',      hasDb && selCount > 0, withSide(function () { FAR.moveSelected(); }));

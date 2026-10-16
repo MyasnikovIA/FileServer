@@ -149,6 +149,16 @@ FAR._ctxRenderMenu = function () {
         }
     });
 
+// Открыть в новом окне — только для файла
+    entries.push({
+        label: 'Открыть в новом окне',
+        icon: '🪟',
+        enabled: hasDb && isFile,
+        action: function () {
+            FAR.openFileInNewWindow(item, side);
+        }
+    });
+
     entries.push({ sep: true });
 
     // Загрузить — всегда доступно (загружаем в текущий путь панели)

@@ -356,3 +356,99 @@ FAR.guessMimeByName = function (name) {
 
     return map[ext] || '';
 };
+// ============================================================
+// Прямые ссылки на файлы
+// ============================================================
+
+/**
+ * Строит прямой URL к файлу из share.
+ *
+ *   item.path = "Documents/Games/SNES/Worms (U).smc"
+ *   → http://host:8080/Documents/Games/SNES/Worms%20(U).smc
+ *
+ * Слэши остаются разделителями, каждый сегмент кодируется
+ * через encodeURIComponent (пробелы, кириллица, спецсимволы).
+ *
+ * @param {Object} item   — элемент fileIndex (path уже включает share)
+ * @param {string} [side] — 'left' | 'right' (по умолчанию активная)
+ * @returns {string|null}
+ */
+FAR.buildDirectFileUrl = function (item, side) {
+    if (!item || !item.path) return null;
+
+    side = side || FAR.activePanel;
+    const ctx = FAR.side[side];
+    if (!ctx || !ctx.conn || !ctx.conn.url) return null;
+
+    const baseUrl = String(ctx.conn.url).replace(/\/+$/, '');
+    const path = FAR.normPath(item.path);
+    if (!path) return null;
+
+    const encoded = path
+        .split('/')
+        .filter(Boolean)
+        .map(encodeURIComponent)
+        .join('/');
+
+    return baseUrl + '/' + encoded;
+};
+
+/**
+ * Открывает файл в новом окне браузера.
+ *
+ * Авторизация:
+ *   • cookie filebd_token — отправляется браузером автоматически
+ *     (ставится сервером при /api/login и дублируется в JS);
+ *   • перед открытием делается HEAD с Bearer-токеном, чтобы
+ *     не показывать пользователю 401/403 в новой вкладке.
+ *
+ * @param {Object} item
+ * @param {string} [side]
+ */
+FAR.openFileInNewWindow = async function (item, side) {
+    if (!item || item.isFolder) {
+        FAR.toast('Выберите файл (не папку)', 'warning');
+        return;
+    }
+
+    const url = FAR.buildDirectFileUrl(item, side);
+    if (!url) {
+        FAR.toast('Не удалось определить адрес файла', 'warning');
+        return;
+    }
+
+    // ---- Проверка доступа ДО открытия ----
+    // fetch-обёртка (04b-auth-token.js) подставит Bearer и cookie.
+    try {
+        const res = await fetch(url, { method: 'HEAD' });
+
+        if (res.status === 401) {
+            FAR.toast('Сессия истекла — войдите заново', 'warning');
+            FAR.openConnModal();
+            return;
+        }
+        if (res.status === 403) {
+            FAR.toast('Нет доступа к файлу', 'error');
+            return;
+        }
+        if (res.status === 404) {
+            FAR.toast('Файл не найден на сервере', 'warning');
+            return;
+        }
+        if (!res.ok) {
+            FAR.toast('Файл недоступен (HTTP ' + res.status + ')', 'warning');
+            return;
+        }
+    } catch (e) {
+        // Сеть/CORS — не блокируем открытие, браузер сам покажет
+        console.warn('[openFileInNewWindow] HEAD check failed:', e);
+    }
+
+    // ---- Открываем новую вкладку ----
+    // 'noopener' — не даём новой вкладке доступ к window.opener.
+    // Cookie уйдёт автоматически (same-site).
+    const win = window.open(url, '_blank', 'noopener');
+    if (!win) {
+        FAR.toast('Браузер заблокировал новое окно', 'warning');
+    }
+};

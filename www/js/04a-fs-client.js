@@ -269,18 +269,53 @@ FAR.FsClient.prototype.remove = async function (doc) {
     return { ok: true };
 };
 
-// ---- attachments ----
-
+// ============================================================
+// getAttachment — читает тело файла.
+//
+// ВАЖНО: используется ПРЯМОЙ URL вида <baseUrl>/<path>,
+// а не /api/read?path=...
+//
+//   <baseUrl>/Documents/Games/SNES/Worms.smc
+//
+// Это даёт:
+//   • единообразие с просмотром файлов напрямую (a href, img, video);
+//   • браузерное кэширование blob/файлов по стабильному URL;
+//   • возможность открыть тот же файл в новой вкладке.
+//
+// Сервер поддерживает и /api/read, и прямые URL — оба
+// возвращают один и тот же контент. Здесь мы явно выбираем
+// прямые URL.
+//
+// Кодирование: слэши остаются разделителями, каждый сегмент
+// URL-encoded (пробелы, кириллица, спецсимволы).
+// ============================================================
 FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
     opts = opts || {};
     const path = this._pathFromId(id);
 
-    const res = await this._fetch(this._url('/api/read', { path: path }));
+    // Собираем прямой URL: каждый сегмент кодируем отдельно,
+    // слэши остаются как есть.
+    const encodedPath = String(path)
+        .split('/')
+        .filter(Boolean)
+        .map(encodeURIComponent)
+        .join('/');
+
+    const url = this.baseUrl + '/' + encodedPath;
+
+    const res = await this._fetch(url);
+
     if (res.status === 404) {
-        const err = new Error('missing'); err.status = 404; err.name = 'not_found'; throw err;
+        const err = new Error('missing');
+        err.status = 404;
+        err.name = 'not_found';
+        throw err;
     }
     if (res.status === 401) {
-        const err = new Error('unauthorized'); err.status = 401; err.name = 'unauthorized'; throw err;
+        const err = new Error('unauthorized');
+        err.status = 401;
+        err.name = 'unauthorized';
+        throw err;
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
