@@ -117,6 +117,29 @@ FAR.WM.registerApp({
 });
 
 // ============================================================
+// Приложение: Браузер (внутри WM-окна)
+// ============================================================
+
+FAR.WM.registerApp({
+    id: 'browser',
+    title: 'Браузер',
+    icon: '🌐',
+    keywords: 'браузер browser web iframe html',
+    singleton: false,
+    width: 1100,
+    height: 720,
+    open: async function (win, props) {
+        await FAR.WM._mountBrowserViewer(win, props);
+    },
+    onClose: function (win) {
+        if (win.props && win.props._browserApi) {
+            try { win.props._browserApi.destroy(); } catch (e) {}
+            win.props._browserApi = null;
+        }
+    }
+});
+
+// ============================================================
 // Приложение: Универсальный просмотрщик
 // ============================================================
 

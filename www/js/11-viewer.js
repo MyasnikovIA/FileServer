@@ -330,6 +330,19 @@ FAR.openFile = async function (item, side, index) {
         console.warn('Ошибка проверки на панораму:', e);
     }
 
+    // ===== ПРОВЕРКА 6: HTML-документ =====
+    try {
+        if (typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(item)) {
+            if (typeof FAR.openBrowserFromItem === 'function') {
+                FAR.openBrowserFromItem(item, side);
+                FAR._viewerUpdateNavButtons();
+                return;
+            }
+        }
+    } catch (e) {
+        console.warn('Ошибка проверки HTML:', e);
+    }
+
     // === Обычный просмотрщик ===
     const modal = document.getElementById('viewerModal');
     const title = document.getElementById('viewerTitle');

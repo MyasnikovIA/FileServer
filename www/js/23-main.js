@@ -41,6 +41,7 @@ FAR.injectModals = function() {
         'modals/nes-viewer.html',
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',
+        'modals/browser.html',
         'modals/gamepad-setup.html',
         'modals/progress.html',
         'modals/loading.html',
@@ -81,6 +82,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     FAR.setupKeyboard();
     FAR.setupGamepadAuto();
     FAR.setupPanelContextMenu();
+
+    if (typeof FAR.initBrowser === 'function') {
+        FAR.initBrowser();
+    }
 
     if (typeof FAR.WM !== 'undefined') {
         setTimeout(function () {

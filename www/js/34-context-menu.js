@@ -158,6 +158,17 @@ FAR._ctxRenderMenu = function () {
             FAR.openFileInNewWindow(item, side);
         }
     });
+    // Открыть в браузере — для HTML-файлов
+    entries.push({
+        label: 'Открыть в браузере',
+        icon: '🌐',
+        enabled: hasDb && isFile && (typeof FAR.isHtmlFile === 'function') && FAR.isHtmlFile(item),
+        action: function () {
+            if (typeof FAR.openBrowserFromItem === 'function') {
+                FAR.openBrowserFromItem(item, side);
+            }
+        }
+    });
 
     entries.push({ sep: true });
 

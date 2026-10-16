@@ -663,6 +663,28 @@ FAR.WM._explorerNavigate = async function (win, side, targetPath) {
     await FAR.renderPanel(side);
 };
 
+// ============================================================
+// Контекстное меню (ПКМ) в окне Проводника (WM-режим).
+// ============================================================
+//
+// Пункты:
+//   📤 Загрузить              — залить файлы в текущую папку
+//   📁 Создать папку          — создать подпапку
+//   🌐 Открыть в браузере     — HTML-файл в модалке браузера
+//   🪟 Открыть в новом окне   — прямая ссылка на файл в новой вкладке
+//   📋 Копировать             — во вторую панель
+//   ✂️ Перенести              — во вторую панель
+//   📥 Скачать                — каждый файл отдельно
+//   🗜️ Скачать ZIP            — одним архивом
+//   🗑️ Удалить                — с подтверждением
+//   🔄 Обновить               — перечитать директорию
+//   ⬆ Вверх                   — на уровень выше
+//   🏠 В корень               — в корень сервера
+//
+// Меню рендерится в общий #wmContextMenu, поднимается выше
+// всех окон WM через inline z-index.
+// ============================================================
+
 FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const menu = document.getElementById('wmContextMenu');
     if (!menu) return;
@@ -678,6 +700,10 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const selSet = FAR.side[side].selectedIdx;
     const selCount = selSet ? selSet.size : 0;
     const hasDb = !!FAR.side[side].db;
+
+    // ============================================================
+    // Хелперы для построения меню
+    // ============================================================
 
     const add = function (label, enabled, onClick) {
         const el = document.createElement('div');
@@ -695,11 +721,13 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
         }
         menu.appendChild(el);
     };
+
     const addSep = function () {
         const s = document.createElement('div');
         s.className = 'wm-ctx-sep';
         menu.appendChild(s);
     };
+
     const withSide = function (fn) {
         return function () {
             const prevActive = FAR.activePanel;
@@ -709,9 +737,10 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
             }
         };
     };
+
     // ============================================================
-    // Получаем текущий выбранный элемент — нужен для пункта
-    // «Открыть в новом окне».
+    // Получаем текущий выбранный элемент.
+    // Нужен для пунктов «Открыть в браузере» и «Открыть в новом окне».
     // ============================================================
     const getSelectedItem = function () {
         const c = FAR.side[side];
@@ -723,23 +752,42 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     };
 
     const selectedItem = getSelectedItem();
-    const canOpenInNewWindow = hasDb && selectedItem && !selectedItem.isFolder;
+    const isFile = !!(selectedItem && !selectedItem.isFolder);
+    const isHtml = isFile
+        && typeof FAR.isHtmlFile === 'function'
+        && FAR.isHtmlFile(selectedItem);
 
+    // ============================================================
+    // Пункты меню
+    // ============================================================
 
-
+    // --- Загрузка/создание ---
     add('📤 Загрузить',     hasDb, withSide(function () { FAR.uploadFile(); }));
     add('📁 Создать папку', hasDb, withSide(function () { FAR.createFolder(); }));
-    add('🪟 Открыть в новом окне', canOpenInNewWindow, withSide(function () {
+
+    // --- Открытие файлов ---
+    add('🌐 Открыть в браузере', hasDb && isHtml, withSide(function () {
+        const it = getSelectedItem();
+        if (it) FAR.openBrowserFromItem(it, side);
+    }));
+
+    add('🪟 Открыть в новом окне', hasDb && isFile, withSide(function () {
         const it = getSelectedItem();
         if (it) FAR.openFileInNewWindow(it, side);
     }));
+
     addSep();
+
+    // --- Файловые операции (требуют выделения) ---
     add('📋 Копировать',    hasDb && selCount > 0, withSide(function () { FAR.copySelected(); }));
     add('✂️ Перенести',      hasDb && selCount > 0, withSide(function () { FAR.moveSelected(); }));
     add('📥 Скачать',       hasDb && selCount > 0, withSide(function () { FAR.downloadSelectedUncompressed(); }));
     add('🗜️ Скачать ZIP',   hasDb && selCount > 0, withSide(function () { FAR.downloadSelectedAsZip(); }));
     add('🗑️ Удалить',       hasDb && selCount > 0, withSide(function () { FAR.deleteSelected(); }));
+
     addSep();
+
+    // --- Навигация ---
     add('🔄 Обновить',      hasDb, withSide(function () { FAR.reloadPanel(side); }));
     add('⬆ Вверх',          true,  withSide(function () { FAR.navigatePanel(side, '..'); }));
     add('🏠 В корень',      true,  withSide(function () { FAR.navigatePanel(side, '/'); }));
@@ -1061,6 +1109,69 @@ FAR.WM._mountPdfViewer = async function (win, props) {
         statusEl.style.color = '#f38ba8';
     }
 };
+// ============================================================
+// Браузер (WM-окно)
+// ============================================================
+//
+// Внутри win.bodyEl строится UI браузера через общий
+// FAR._createBrowser(). Окно ведёт себя как любое WM-окно:
+// ресайз, снапы, минимизация.
+//
+// Заголовок окна обновляется по onChangeTitle — берём <title>
+// страницы, если iframe same-origin.
+
+FAR.WM._mountBrowserViewer = async function (win, props) {
+    const url = props.url || '';
+    const homeUrl = props.homeUrl || url;
+    const trusted = !!props.trusted;
+
+    // Очищаем тело
+    win.bodyEl.innerHTML = '';
+    win.bodyEl.style.display = 'flex';
+    win.bodyEl.style.flexDirection = 'column';
+    win.bodyEl.style.minHeight = '0';
+
+    // Уничтожаем предыдущий инстанс, если что-то было
+    if (win.props._browserApi) {
+        try { win.props._browserApi.destroy(); } catch (e) {}
+        win.props._browserApi = null;
+    }
+
+    // Заголовок окна
+    const titleEl = win.el.querySelector('.wm-title-text');
+    if (titleEl) titleEl.textContent = '🌐 ' + (props.title || 'Браузер');
+
+    // Создаём UI
+    const api = FAR._createBrowser(win.bodyEl, {
+        url: url,
+        homeUrl: homeUrl,
+        trusted: trusted,
+        onChangeTitle: function (t) {
+            const tEl = win.el.querySelector('.wm-title-text');
+            if (tEl) tEl.textContent = t;
+            // Меняем и title окна в панели задач
+            win.title = t;
+            if (typeof FAR.WM._renderTaskbar === 'function') {
+                FAR.WM._renderTaskbar();
+            }
+        }
+    });
+
+    win.props._browserApi = api;
+
+    // Если URL был передан — уже стартовали навигацию внутри createBrowser.
+    // Если нет — оставим пустую страницу с подсказкой.
+    if (!url) {
+        // Просто фокусируем адресную строку
+        setTimeout(function () {
+            try {
+                const input = win.bodyEl.querySelector('.browser-url-input');
+                if (input) input.focus();
+            } catch (e) {}
+        }, 50);
+    }
+};
+
 
 // ---- Панорама ----
 
@@ -2334,6 +2445,26 @@ FAR.WM._mountFileDialogAsApp = async function (win, props) {
 // Функция: FAR.WM._installOpenFileWrapper (полный листинг)
 // ============================================================
 
+// ============================================================
+// Обёртка ТОЛЬКО на FAR.openFile
+// ============================================================
+//
+// В оконном режиме выбирает, в каком WM-приложении открыть файл,
+// вместо модалок классического режима.
+//
+// Порядок проверок важен:
+//   1. .fbmp3 (плейлист) — первым, т.к. может совпасть с json
+//   2. .jsdos   — DOS-игра
+//   3. .nes     — JSNES
+//   4. EmulatorJS (.smc, .sfc, .gba, .psx и др.)
+//   5. Аудио (.mp3, .m4a, ...)
+//   6. Видео (.mp4, .webm, ...)
+//   7. PDF (.pdf)
+//   8. HTML (.html, .htm) → модалка браузера поверх WM-окон
+//   9. Панорама (соотношение ≈ 2:1)
+//  10. Fallback — универсальный просмотрщик
+// ============================================================
+
 FAR.WM._installOpenFileWrapper = function () {
     if (FAR.WM._openFileWrapped) return;
     FAR.WM._openFileWrapped = true;
@@ -2358,24 +2489,53 @@ FAR.WM._installOpenFileWrapper = function () {
                     props: { file: item, side: side, playlistPath: item.path }
                 });
             }
+
+            // ---- JSDOS ----
             if (typeof FAR.isJsdos === 'function' && FAR.isJsdos(item)) {
                 return FAR.WM.openApp('jsdos', { props: { file: item, side: side } });
             }
+
+            // ---- NES ----
             if (typeof FAR.isNes === 'function' && FAR.isNes(item)) {
                 return FAR.WM.openApp('nes', { props: { file: item, side: side } });
             }
+
+            // ---- EmulatorJS (SNES, N64, GBA, PSX, Sega и т.д.) ----
             if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) {
                 return FAR.WM.openApp('emulator', { props: { file: item, side: side } });
             }
+
+            // ---- Аудио ----
             if (typeof FAR.isMp3 === 'function' && FAR.isMp3(item)) {
                 return FAR.WM.openApp('mp3', { props: { file: item, side: side } });
             }
+
+            // ---- Видео ----
             if (typeof FAR.isVideo === 'function' && FAR.isVideo(item)) {
                 return FAR.WM.openApp('video', { props: { file: item, side: side } });
             }
+
+            // ---- PDF ----
             if (typeof FAR.isPdf === 'function' && FAR.isPdf(item)) {
                 return FAR.WM.openApp('pdf', { props: { file: item, side: side } });
             }
+
+            // ============================================================
+            // HTML-документ — открываем в модалке «Браузер».
+            //
+            // ВАЖНО: это модалка, а не WM-окно. Она поднимается
+            // над окнами WM (z-index выставляется внутри openBrowser).
+            // Модуль: js/38-browser-viewer.js
+            // ============================================================
+            if (typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(item)) {
+                if (typeof FAR.openBrowserFromItem === 'function') {
+                    FAR.openBrowserFromItem(item, side);
+                    return;
+                }
+                console.warn('[WM openFile] FAR.openBrowserFromItem не загружен');
+            }
+
+            // ---- Панорама 360° (асинхронная проверка по размерам) ----
             if (typeof FAR.isPanorama === 'function') {
                 let isPano = false;
                 try { isPano = await FAR.isPanorama(item, side); } catch (e) {}
@@ -2386,6 +2546,8 @@ FAR.WM._installOpenFileWrapper = function () {
         } catch (e) {
             console.warn('[WM openFile] проверка типа:', e);
         }
+
+        // ---- Fallback: универсальный просмотрщик ----
         return FAR.WM.openApp('viewer', { props: { file: item, side: side } });
     };
 };
