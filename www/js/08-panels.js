@@ -63,10 +63,8 @@ FAR._renderPanelDOM = function (side) {
 
     // Подсказка с текущей БД
     if (pathEl) {
-        const dbLabel = ctx.conn
-            ? (ctx.conn.db + '@' + (ctx.conn.url || '').replace(/^https?:\/\//, ''))
-            : '— нет подключения —';
-        pathEl.title = 'БД: ' + dbLabel + '\nКлик — сменить БД для этой панели';
+        const dbLabel = ctx.conn ? FAR.connLabel(ctx.conn) : '— нет подключения —';
+        pathEl.title = 'Источник: ' + dbLabel + '\nКлик — сменить сервер для этой панели';
     }
 
     // items для этой панели берём прямо из ctx.fileIndex

@@ -684,20 +684,22 @@ FAR.WM.updateTray = function () {
     const dbEl = document.getElementById('wmTrayDb');
     if (dbEl) {
         const ctx = FAR.side[FAR.activePanel];
-        const txt = ctx && ctx.conn
-            ? ctx.conn.db + '@' + (ctx.conn.url || '').replace(/^https?:\/\//, '')
-            : '— нет —';
-        dbEl.querySelector('span').textContent = txt;
-        dbEl.title = 'БД активной панели: ' + txt;
+        const txt = (ctx && ctx.conn) ? FAR.connLabel(ctx.conn) : '— нет —';
+        const span = dbEl.querySelector('span');
+        if (span) span.textContent = txt;
+        dbEl.title = 'Источник активной панели: ' + txt;
     }
+
     // Джойстик
     const gpEl = document.getElementById('wmTrayGamepad');
     if (gpEl) {
         const mode = (typeof FAR.getGamepadMode === 'function') ? FAR.getGamepadMode() : 'files';
         const label = (typeof FAR.gamepadModeLabel === 'function')
             ? FAR.gamepadModeLabel(mode) : mode;
-        gpEl.querySelector('span').textContent = label;
+        const span = gpEl.querySelector('span');
+        if (span) span.textContent = label;
     }
+
     // Прогресс
     const prEl = document.getElementById('wmTrayProgress');
     if (prEl) {
@@ -705,7 +707,8 @@ FAR.WM.updateTray = function () {
         if (p && p.active) {
             prEl.style.display = '';
             const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
-            prEl.querySelector('span').textContent = pct + '%';
+            const span = prEl.querySelector('span');
+            if (span) span.textContent = pct + '%';
         } else {
             prEl.style.display = 'none';
         }

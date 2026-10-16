@@ -197,24 +197,39 @@ FAR.readFileBodyFromSide = async function (side, item) {
 
     const contentType = item.contentType || 'application/octet-stream';
 
+    // Уточняет MIME:
+    //   1. Если сервер вернул generic — пробуем определить по имени.
+    //   2. Если это ROM-файл эмулятора — принудительно octet-stream.
+    const finalize = function (bytes, ct) {
+        let result = ct;
+
+        // 1. Догадка по имени, если тип generic
+        if (!result || result === 'application/octet-stream') {
+            const guessed = FAR.guessMimeByName(item.name);
+            if (guessed) result = guessed;
+        }
+
+        // 2. ROM-файлы — всегда octet-stream
+        //    (Snes9x / другие ядра не должны видеть text/plain
+        //    или application/x-snes-rom).
+        if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) {
+            result = 'application/octet-stream';
+        }
+
+        return { data: bytes, contentType: result || 'application/octet-stream' };
+    };
+
     // 1. Основной путь: вложение 'b' в самом документе.
-    // Пробуем сразу с { binary: true } — так PouchDB отдаёт Blob
-    // в браузерах с поддержкой Blob. Если не поддерживается —
-    // PouchDB проигнорирует опцию и вернёт строку.
     try {
         const att = await s.db.getAttachment(item._id, 'b', { binary: true });
         const { bytes, contentType: ct } =
             await FAR._attachmentToBytesAsync(att, contentType);
-        return { data: bytes, contentType: ct };
+        return finalize(bytes, ct);
     } catch (e) {
-        // 404 — вложения нет, идём в fallback на чанки.
-        // Всё остальное (в т.ч. TypeError внутри) — реальная ошибка,
-        // НЕ маскируем.
         if (e.status !== 404) throw e;
     }
 
     // 2. Fallback: открытые чанки (без шифрования).
-    //    Ищем детей либо в doc.children, либо в item.children.
     const doc = await s.db.get(item._id);
     const children = doc.children || item.children || [];
 
@@ -245,7 +260,7 @@ FAR.readFileBodyFromSide = async function (side, item) {
         off += c.length;
     }
 
-    return { data: data, contentType: contentType };
+    return finalize(data, contentType);
 };
 
 // ============================================================

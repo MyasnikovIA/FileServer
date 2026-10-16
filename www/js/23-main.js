@@ -54,6 +54,7 @@ FAR.injectModals = function() {
     }
     root.innerHTML = html;
 };
+
 // ============================================================
 // Старт
 // ============================================================
@@ -92,6 +93,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     FAR._installPannellumDbWrapper();
 
     // ============================================================
+    // Восстанавливаем токен из cookie.
+    //
+    // Если пользователь уже логинился ранее и cookie ещё жива —
+    // подхватываем токен, чтобы прямые URL (img/video/a href)
+    // работали без повторного логина. Также это восстановит
+    // Authorization для следующих fetch-запросов.
+    // ============================================================
+    if (typeof FAR.restoreAuthTokenFromCookie === 'function') {
+        FAR.restoreAuthTokenFromCookie();
+    }
+
+    // ============================================================
     // Автоподключение
     // ============================================================
     const savedGlobal = FAR.loadConnFromLS();
@@ -104,7 +117,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     if (saved) {
         FAR.setStatus('🔌 Подключение с сохранёнными данными…');
-        FAR.showLoading('Подключение к FileBD…', saved.url + '/' + saved.db);
+        FAR.showLoading('Подключение к FileServer…', saved.url);
         try {
             const res = await FAR.connectToDb(saved);
 

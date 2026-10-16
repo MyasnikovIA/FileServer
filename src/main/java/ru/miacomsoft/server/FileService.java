@@ -81,9 +81,12 @@ public class FileService {
             e.put("binary", false);
         } else {
             e.put("size", Files.size(p));
-            String ct = Files.probeContentType(p);
-            if (ct == null) ct = "application/octet-stream";
+            // Используем общий детектор — так contentType совпадает
+            // с тем, что реально отдаётся в serveFile.
+            String ct = StaticHandler.detectContentType(p);
             e.put("contentType", ct);
+            // ROM-образы и прочие "опознанные" бинарные форматы
+            // правильно помечаются как binary.
             e.put("binary", !isTextContentType(ct));
         }
         return e;

@@ -168,7 +168,7 @@ FAR.openEmulatorViewer = async function (item, side) {
     root.innerHTML = '';
     root.id = 'emulatorRoot';
 
-    // ==== ХУКИ СОСТОЯНИЙ — ДО создания эмулятора ====
+    // ==== ХУКИ СОСТОЯНИЙ ====
     loadingText.textContent = 'Загрузка модуля сохранений…';
     try {
         if (typeof FAR._installEmulatorStateHooks !== 'function') {
@@ -178,9 +178,8 @@ FAR.openEmulatorViewer = async function (item, side) {
     } catch (e) {
         console.warn('[EmuState] Не удалось загрузить модуль состояний:', e);
     }
-    // ================================================
 
-    // ==== Загрузка ROM из БД конкретной панели ====
+    // ==== Загрузка ROM ====
     let blobUrl = null;
     try {
         const { data, contentType } = await FAR.readFileBodyFromSide(side, item);
@@ -195,10 +194,17 @@ FAR.openEmulatorViewer = async function (item, side) {
         return;
     }
 
-    // ==== Готовим EJS_* глобалы ДО loader.js ====
+    // ============================================================
+    // Готовим EJS_* глобалы ДО loader.js.
+    //
+    // КЛЮЧЕВОЕ: EJS_gameName — имя файла с расширением.
+    // EmulatorJS использует его для определения системы,
+    // если по какой-то причине не сработал EJS_core.
+    // ============================================================
     window.EJS_player        = '#emulatorRoot';
     window.EJS_core          = core;
     window.EJS_gameUrl       = blobUrl;
+    window.EJS_gameName      = item.name;
     window.EJS_pathtodata    = 'lib/js-emulator/';
     window.EJS_color         = '#89b4fa';
     window.EJS_startOnLoaded = true;
@@ -332,7 +338,7 @@ FAR._createEmulatorInstance = function(rootContainer, resolve, reject) {
             dataPath:       window.EJS_pathtodata,
             system:         window.EJS_core,
             biosUrl:        window.EJS_biosUrl,
-            gameName:       window.EJS_gameName,
+            gameName:       window.EJS_gameName || window.EJS_gameUrl,
             color:          window.EJS_color,
             adUrl:          window.EJS_AdUrl,
             adMode:         window.EJS_AdMode,

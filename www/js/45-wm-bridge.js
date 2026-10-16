@@ -230,7 +230,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     const renderPathBar = function () {
         const c = FAR.side[side];
         const norm = FAR.normPath(c.path);
-        const dbLabel = c.conn ? c.conn.db : '—';
+        const dbLabel = c.conn ? FAR.connLabel(c.conn) : '— не подключено —';
         const parts = norm ? norm.split('/').filter(Boolean) : [];
 
         pathBar.innerHTML = '';
@@ -238,7 +238,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         // Бейдж текущей БД (информационный, не кликабельный)
         const dbBadge = document.createElement('span');
         dbBadge.textContent = '🗄️ ' + dbLabel;
-        dbBadge.title = 'Текущая БД этой панели: ' + dbLabel;
+        dbBadge.title = 'Текущий источник этой панели: ' + dbLabel;
         dbBadge.style.cssText =
             'color:#89b4fa; padding:2px 8px; background:#1a1a2a; ' +
             'border-radius:3px; flex-shrink:0; ' +
@@ -1379,6 +1379,13 @@ FAR.WM._mountNesViewer = async function (win, props) {
         return;
     }
 
+    // Диагностика: смотрим первые байты ROM — должны быть 4e 45 53 1a
+    try {
+        const head = Array.from(romBuffer.slice(0, 16))
+            .map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log('[WM nes] ROM header:', head);
+    } catch (e) { /* ignore */ }
+
     await new Promise(function (resolve) { setTimeout(resolve, 30); });
 
     try {
@@ -1393,13 +1400,25 @@ FAR.WM._mountNesViewer = async function (win, props) {
         });
         win.props._nesBrowser = browser;
 
+        // ============================================================
+        // ВАЖНО: передаём Uint8Array НАПРЯМУЮ в loadROM.
+        //
+        // Раньше код делал romBuffer.buffer.slice(...) и передавал
+        // ArrayBuffer. JSNES проверяет магические байты через
+        // data[i] / data.charCodeAt(0) — на ArrayBuffer это даёт
+        // undefined, из-за чего выбрасывается "Not a valid NES ROM".
+        //
+        // Uint8Array поддерживает и []-индексацию, и charCodeAt через
+        // правильную обёртку внутри JSNES.
+        // ============================================================
         let romData = romBuffer;
-        if (romBuffer && romBuffer.buffer && romBuffer.byteOffset !== undefined) {
-            romData = romBuffer.buffer.slice(
-                romBuffer.byteOffset,
-                romBuffer.byteOffset + romBuffer.byteLength
-            );
-        }
+
+        // Если JSNES ожидает именно ArrayBuffer — этот вариант тоже
+        // работает в современных версиях:
+        // let romData = romBuffer.buffer.slice(
+        //     romBuffer.byteOffset,
+        //     romBuffer.byteOffset + romBuffer.byteLength
+        // );
 
         browser.loadROM(romData);
 
@@ -1493,6 +1512,12 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         window.EJS_player        = '#' + tempContainer.id;
         window.EJS_core          = core;
         window.EJS_gameUrl       = blobUrl;
+        // ============================================================
+        // Явно передаём имя файла — EmulatorJS использует расширение
+        // из EJS_gameName, чтобы правильно определить тип ROM,
+        // если по какой-то причине system не сработает.
+        // ============================================================
+        window.EJS_gameName      = item.name;
         window.EJS_pathtodata    = 'lib/js-emulator/';
         window.EJS_color         = '#89b4fa';
         window.EJS_startOnLoaded = false;
@@ -1522,9 +1547,19 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         return;
     }
 
+    // ============================================================
+    // Готовим EJS_* глобалы и config.
+    //
+    // КЛЮЧЕВОЕ:
+    //   • EJS_gameName / gameName — имя файла с расширением.
+    //     EmulatorJS извлекает расширение и по нему понимает систему.
+    //   • EJS_core / system — тоже явно указываем ядро на случай,
+    //     если EmulatorJS смотрит в первую очередь на system.
+    // ============================================================
     window.EJS_player        = '#' + containerId;
     window.EJS_core          = core;
     window.EJS_gameUrl       = blobUrl;
+    window.EJS_gameName      = item.name;
     window.EJS_pathtodata    = 'lib/js-emulator/';
     window.EJS_color         = '#89b4fa';
     window.EJS_startOnLoaded = true;
@@ -1534,6 +1569,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
     try {
         const config = {
             gameUrl:     blobUrl,
+            gameName:    item.name,
             dataPath:    'lib/js-emulator/',
             system:      core,
             color:       '#89b4fa',
@@ -2360,27 +2396,22 @@ FAR.WM._mountSideConnUI = function (win, side) {
     win.bodyEl.innerHTML =
         '<div style="padding:20px;background:#1e1e2e;color:#cdd6f4;height:100%;box-sizing:border-box;overflow:auto;">' +
         '<div style="display:flex;flex-direction:column;gap:12px;">' +
+
         '<div style="padding:8px 10px;background:#313244;border-left:3px solid #89b4fa;border-radius:4px;font-size:13px;">' +
         'Подключение только для панели: <b style="color:#89b4fa;">' +
         (side === 'left' ? 'Левая' : 'Правая') + '</b></div>' +
 
-        '<label style="font-size:12px;color:#a6adc8;">Тип источника' +
-        '<select data-role="type" style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;">' +
-        '<option value="couchdb">🗄️ CouchDB / PouchDB</option>' +
-        '<option value="filesystem">💾 Локальный диск (FileServer)</option>' +
-        '</select></label>' +
-
-        '<label style="font-size:12px;color:#a6adc8;" data-role="url-label">Адрес БД (с портом)' +
-        '<input data-role="url" type="text" style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
-
-        '<label style="font-size:12px;color:#a6adc8;" data-role="db-row">Имя базы данных' +
-        '<input data-role="db" type="text" style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
+        '<label style="font-size:12px;color:#a6adc8;">Адрес FileServer' +
+        '<input data-role="url" type="text" placeholder="http://127.0.0.1:8080" ' +
+        'style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
 
         '<label style="font-size:12px;color:#a6adc8;">Имя пользователя' +
-        '<input data-role="user" type="text" style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
+        '<input data-role="user" type="text" placeholder="admin" ' +
+        'style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
 
         '<label style="font-size:12px;color:#a6adc8;">Пароль' +
-        '<input data-role="pass" type="password" style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
+        '<input data-role="pass" type="password" placeholder="••••••••" ' +
+        'style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
 
         '<div data-role="error" style="color:#f38ba8;font-size:12px;min-height:16px;"></div>' +
         '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">' +
@@ -2388,58 +2419,34 @@ FAR.WM._mountSideConnUI = function (win, side) {
         '<button data-role="connect" style="padding:8px 18px;background:#a6e3a1;color:#1e1e2e;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">Подключиться</button>' +
         '</div></div></div>';
 
-    const typeSel  = win.bodyEl.querySelector('[data-role="type"]');
-    const urlEl    = win.bodyEl.querySelector('[data-role="url"]');
-    const urlLbl   = win.bodyEl.querySelector('[data-role="url-label"]');
-    const dbRow    = win.bodyEl.querySelector('[data-role="db-row"]');
-    const dbEl     = win.bodyEl.querySelector('[data-role="db"]');
-    const userEl   = win.bodyEl.querySelector('[data-role="user"]');
-    const passEl   = win.bodyEl.querySelector('[data-role="pass"]');
-    const errEl    = win.bodyEl.querySelector('[data-role="error"]');
+    const urlEl  = win.bodyEl.querySelector('[data-role="url"]');
+    const userEl = win.bodyEl.querySelector('[data-role="user"]');
+    const passEl = win.bodyEl.querySelector('[data-role="pass"]');
+    const errEl  = win.bodyEl.querySelector('[data-role="error"]');
     const cancelBtn  = win.bodyEl.querySelector('[data-role="cancel"]');
     const connectBtn = win.bodyEl.querySelector('[data-role="connect"]');
 
+    // Предзаполнение
     const ctx = FAR.side[side];
     let def = null;
     if (ctx && ctx.conn) def = ctx.conn;
     else if (typeof FAR.getConnDefaultsForSide === 'function') def = FAR.getConnDefaultsForSide(side);
     else if (typeof FAR.getDefaultConn === 'function') def = FAR.getDefaultConn();
-    if (!def) def = { type: 'couchdb', url: '', db: '', user: '', pass: '' };
+    if (!def) def = { url: '', user: '', pass: '' };
 
-    typeSel.value = def.type || 'couchdb';
-    urlEl.value   = def.url  || '';
-    dbEl.value    = def.db   || '';
-    userEl.value  = def.user || '';
-    passEl.value  = def.pass || '';
-
-    const updateFields = function () {
-        const type = typeSel.value || 'couchdb';
-        if (type === 'filesystem') {
-            urlLbl.firstChild.nodeValue = 'Адрес FileServer';
-            urlEl.placeholder = 'http://localhost:8080';
-            dbRow.style.display = 'none';
-        } else {
-            urlLbl.firstChild.nodeValue = 'Адрес БД (с портом)';
-            urlEl.placeholder = 'http://192.168.15.20:5984';
-            dbRow.style.display = '';
-        }
-    };
-    typeSel.addEventListener('change', updateFields);
-    updateFields();
+    urlEl.value  = def.url  || '';
+    userEl.value = def.user || '';
+    passEl.value = def.pass || '';
 
     cancelBtn.onclick = function () { FAR.WM.closeWindow(win.id); };
 
     connectBtn.onclick = async function () {
-        const type = typeSel.value || 'couchdb';
         const cfg = {
-            type: type,
             url:  urlEl.value.trim(),
-            db:   type === 'couchdb' ? dbEl.value.trim() : '',
             user: userEl.value.trim(),
             pass: passEl.value
         };
-        if (!cfg.url) { errEl.textContent = 'Укажите URL'; return; }
-        if (type === 'couchdb' && !cfg.db) { errEl.textContent = 'Укажите имя БД'; return; }
+        if (!cfg.url) { errEl.textContent = 'Укажите URL FileServer'; return; }
 
         connectBtn.disabled = true;
         connectBtn.textContent = 'Подключение…';
@@ -2467,7 +2474,7 @@ FAR.WM._mountSideConnUI = function (win, side) {
         try { if (typeof FAR.saveSideConnToLS === 'function') FAR.saveSideConnToLS(side, cfg); } catch (e) {}
 
         FAR.updateAuthUI();
-        FAR.setStatus('✅ Панель «' + (side === 'left' ? 'Левая' : 'Правая') + '» подключена');
+        FAR.setStatus('✅ Панель «' + (side === 'left' ? 'Левая' : 'Правая') + '» подключена: ' + res.fullUrl);
         FAR.toast('Панель подключена', 'success');
 
         try { await FAR.loadFilesForSide(side, { path: '/', silent: true }); } catch (e) {}

@@ -141,9 +141,21 @@ public class FileServer {
     }
 
     // ---------- HTTP utilities ----------
-
     static void handleCors(HttpExchange ex) {
-        ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        // ============================================================
+        // ВАЖНО: с Access-Control-Allow-Credentials: true браузер
+        // требует конкретный Origin (не «*»). Поэтому подставляем
+        // Origin из запроса, если он есть.
+        // ============================================================
+        String origin = ex.getRequestHeaders().getFirst("Origin");
+        if (origin != null && !origin.isEmpty()) {
+            ex.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
+            ex.getResponseHeaders().set("Vary", "Origin");
+        } else {
+            ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        }
+
+        ex.getResponseHeaders().set("Access-Control-Allow-Credentials", "true");
         ex.getResponseHeaders().set("Access-Control-Allow-Methods",
                 "GET, POST, PUT, DELETE, OPTIONS, HEAD");
         ex.getResponseHeaders().set("Access-Control-Allow-Headers",

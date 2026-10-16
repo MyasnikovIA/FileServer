@@ -7,9 +7,10 @@ package ru.miacomsoft.server;
 //   1. Authorization: Bearer <token>
 //   2. X-Auth-Token: <token>
 //   3. Authorization: Basic <base64>
-//   4. ?token=<token>
-//   5. ?user=<u>&pass=<p>
-//   6. Анонимная сессия
+//   4. Cookie: filebd_token=<token>          ← НОВОЕ
+//   5. ?token=<token>
+//   6. ?user=<u>&pass=<p>
+//   7. Анонимная сессия
 // ============================================================
 
 import com.sun.net.httpserver.HttpExchange;
@@ -21,10 +22,12 @@ import java.util.Objects;
 
 public class AuthService {
 
+    public static final String AUTH_COOKIE_NAME = "filebd_token";
+
     public static class Session {
-        public String username;      // null для анонима
+        public String username;
         public boolean anonymous;
-        public Config.User user;     // null для анонима
+        public Config.User user;
     }
 
     private final Config config;
@@ -43,6 +46,7 @@ public class AuthService {
     public Session authenticate(HttpExchange ex) {
         String authHeader  = ex.getRequestHeaders().getFirst("Authorization");
         String tokenHeader = ex.getRequestHeaders().getFirst("X-Auth-Token");
+        String cookieHeader = ex.getRequestHeaders().getFirst("Cookie");
 
         // 1. Bearer <token>
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
@@ -54,7 +58,6 @@ public class AuthService {
         if (tokenHeader != null && !tokenHeader.isEmpty()) {
             Session s = sessionFromToken(tokenHeader.trim());
             if (s != null) return s;
-            // Токен невалиден — не падаем в Basic, продолжаем
         }
 
         // 3. Basic <base64>
@@ -62,17 +65,27 @@ public class AuthService {
             return sessionFromBasic(authHeader);
         }
 
-        // 4-5. Query-параметры
+        // 4. Cookie: filebd_token=<token>
+        if (cookieHeader != null && !cookieHeader.isEmpty()) {
+            String cookieToken = parseCookieValue(cookieHeader, AUTH_COOKIE_NAME);
+            if (cookieToken != null && !cookieToken.isEmpty()) {
+                Session s = sessionFromToken(cookieToken);
+                if (s != null) return s;
+            }
+        }
+
+        // 5. Query ?token=
         String query = ex.getRequestURI().getQuery();
         Map<String, String> q = FileServer.parseQuery(query);
 
         String qToken = q.get("token");
         if (qToken != null && !qToken.isEmpty()) {
             Session s = sessionFromToken(qToken);
-            if (s == null) return null;   // токен явно указан, но невалиден
+            if (s == null) return null; // токен указан, но невалиден
             return s;
         }
 
+        // 6. Query ?user=&pass=
         String qUser = q.get("user");
         if (qUser == null) qUser = q.get("username");
         if (qUser != null && !qUser.isEmpty()) {
@@ -81,7 +94,7 @@ public class AuthService {
             return sessionFromCredentials(qUser, qPass == null ? "" : qPass);
         }
 
-        // 6. Аноним
+        // 7. Аноним
         Session anon = new Session();
         anon.anonymous = true;
         return anon;
@@ -137,6 +150,30 @@ public class AuthService {
         s.anonymous = false;
         s.user = u;
         return s;
+    }
+
+    /**
+     * Извлекает значение cookie по имени из заголовка Cookie.
+     * Возвращает null, если cookie нет.
+     */
+    public static String parseCookieValue(String cookieHeader, String name) {
+        if (cookieHeader == null || name == null) return null;
+        String[] parts = cookieHeader.split(";");
+        for (String part : parts) {
+            String trimmed = part.trim();
+            int eq = trimmed.indexOf('=');
+            if (eq <= 0) continue;
+            String k = trimmed.substring(0, eq).trim();
+            if (k.equals(name)) {
+                String v = trimmed.substring(eq + 1);
+                try {
+                    return java.net.URLDecoder.decode(v, "UTF-8");
+                } catch (Exception e) {
+                    return v;
+                }
+            }
+        }
+        return null;
     }
 
     // ---------- Видимость / права ----------

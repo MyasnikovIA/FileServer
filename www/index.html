@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FAR-менеджер — FileBD (Obsidian)</title>
+    <title>FAR-менеджер — FileServer</title>
 
-    <script src="https://cdn.jsdelivr.net/npm/pouchdb@9.0.0/dist/pouchdb.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
     <link rel="stylesheet" href="css/base.css">
@@ -44,11 +43,10 @@
     <button onclick="FAR.downloadSelectedAsZip()" class="btn-zip" id="btnZip" disabled>🗜️ → Скачать ZIP</button>
     <button onclick="FAR.deleteSelected()" class="btn-danger" id="btnDelete" disabled>🗑️ Удалить</button>
     <button onclick="FAR.refreshFiles()" class="btn-warning" id="btnRefresh" disabled>🔄 Обновить</button>
-    <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру документа" disabled>🔍 Debug</button>
-    <button onclick="FAR.migrateLeadingSlashes()" class="btn-migrate" id="btnMigrate" title="Исправить старые документы с ведущим слэшем" disabled>🩹 Fix paths</button>
+    <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру" disabled>🔍 Debug</button>
     <button onclick="FAR.openGamepadSetup()" id="btnGamepad" title="Настроить джойстик">🎮 Джойстик</button>
     <button onclick="FAR.onAuthButton()" class="btn-auth" id="btnAuth" title="Войти / Выйти">🔐 LogIn</button>
-    <button onclick="FAR.WM.toggle()" id="btnWM" title="Оконный режим (Рабочий стол)">🖥 Рабочий стол</button>
+    <button onclick="FAR.WM.toggle()" id="btnWM" title="Оконный режим">🖥 Рабочий стол</button>
     <button onclick="FAR.gamepadModeCycle()"
             oncontextmenu="event.preventDefault(); FAR.openGamepadSetup();"
             class="gp-mode-indicator gp-mode-files"
@@ -62,7 +60,7 @@
         <div class="panel-header">
             <span class="path" id="pathLeft">/</span>
             <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')" title="Сменить БД для левой панели">🗄️</button>
+                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')" title="Сменить сервер для левой панели">🗄️</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '..')">⬆</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '/')">🏠</button>
             </div>
@@ -78,7 +76,7 @@
         <div class="panel-header">
             <span class="path" id="pathRight">/</span>
             <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')" title="Сменить БД для правой панели">🗄️</button>
+                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')" title="Сменить сервер для правой панели">🗄️</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '..')">⬆</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '/')">🏠</button>
             </div>
@@ -100,7 +98,6 @@
 </div>
 
 <div id="modalRoot"></div>
-
 <div class="toast-container" id="toastContainer"></div>
 
 <!-- Pannellum -->
@@ -111,7 +108,7 @@
 <script src="js/01-config.js"></script>
 <script src="js/02-state.js"></script>
 <script src="js/03-utils.js"></script>
-<script src="js/04a-fs-client.js"></script>   <!-- ← НОВЫЙ -->
+<script src="js/04a-fs-client.js"></script>
 <script src="js/05-connection.js"></script>
 <script src="js/06-files.js"></script>
 <script src="js/07-progress.js"></script>
@@ -127,7 +124,6 @@
 <script src="js/17-delete.js"></script>
 <script src="js/18-download.js"></script>
 <script src="js/19-zip.js"></script>
-<script src="js/20-migrate.js"></script>
 <script src="js/21-dragdrop.js"></script>
 <script src="js/22-keyboard.js"></script>
 <script src="js/34-context-menu.js"></script>

@@ -30,6 +30,8 @@ FAR.FsClient.prototype._authHeader = function () {
 FAR.FsClient.prototype._fetch = function (url, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
+    // Cookie отправляются автоматически и сохраняются из ответов.
+    opts.credentials = 'include';
     const auth = this._authHeader();
     if (auth) opts.headers['Authorization'] = auth;
     return fetch(url, opts);
@@ -356,6 +358,7 @@ FAR.FsClient.login = async function (baseUrl, user, pass) {
         res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',   // ← чтобы Set-Cookie сработал
             body: JSON.stringify({ user: user, pass: pass || '' })
         });
     } catch (netErr) {
@@ -382,6 +385,7 @@ FAR.FsClient.logout = async function (baseUrl, token) {
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',   // ← чтобы Set-Cookie (Max-Age=0) сработал
         body: JSON.stringify({ token: token })
     });
     return res.ok;

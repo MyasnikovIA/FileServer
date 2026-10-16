@@ -3,10 +3,8 @@ package ru.miacomsoft.server;
 // ============================================================
 // Config.java — разбор config.json.
 //
-//   http     — { port, host }
-//   web      — путь к статике (по умолчанию "www")
-//   users[]  — { name, password, quota (МБ, -1 = без лимита) }
-//   shares[] — виртуальные «папки/файлы», видимые пользователю.
+// Поддерживает ROOT SHARE — share с пустым "name".
+// Его содержимое монтируется в корень "/".
 // ============================================================
 
 import org.json.JSONArray;
@@ -39,7 +37,7 @@ public class Config {
     // ---------- Share ----------
 
     public static class Share {
-        public String name = "";
+        public String name = "";           // "" = root share
         public String physical = "";
         public String type = "folder";
         public Set<String> access = new HashSet<>();
@@ -49,6 +47,9 @@ public class Config {
 
         public boolean isFolder() { return "folder".equalsIgnoreCase(type); }
         public boolean isFile()   { return !isFolder(); }
+
+        /** Root share — с пустым именем. Монтируется в "/". */
+        public boolean isRoot()   { return name == null || name.isEmpty(); }
 
         public boolean hasRead()   { return access.contains("read");   }
         public boolean hasWrite()  { return access.contains("write");  }
@@ -89,6 +90,7 @@ public class Config {
             cfg.webPath = web.trim();
         }
 
+        // users
         JSONArray arrU = root.optJSONArray("users");
         if (arrU != null) {
             for (int i = 0; i < arrU.length(); i++) {
@@ -102,11 +104,15 @@ public class Config {
             }
         }
 
+        // shares
+        boolean rootShareLogged = false;
         JSONArray arrS = root.optJSONArray("shares");
         if (arrS != null) {
             for (int i = 0; i < arrS.length(); i++) {
                 JSONObject s = arrS.getJSONObject(i);
                 Share sh = new Share();
+                // name МОЖЕТ быть пустым — тогда это root share.
+                // Если поля нет вообще — тоже пустая строка → root share.
                 sh.name     = s.optString("name", "").trim();
                 sh.physical = s.optString("physical", "").trim();
                 sh.type     = s.optString("type", "folder").toLowerCase();
@@ -127,18 +133,48 @@ public class Config {
                         sh.users.add(us.getString(k));
                     }
                 }
-                if (!sh.name.isEmpty() && !sh.physical.isEmpty()) {
-                    cfg.shares.add(sh);
+
+                // Единственное обязательное поле — physical.
+                // name может быть пустым (root share).
+                if (sh.physical.isEmpty()) continue;
+
+                // Root share — только один.
+                if (sh.isRoot()) {
+                    if (rootShareLogged) {
+                        System.err.println(
+                                "[config] WARNING: multiple root shares, ignoring: " + sh.physical);
+                        continue;
+                    }
+                    rootShareLogged = true;
                 }
+
+                cfg.shares.add(sh);
             }
         }
 
         return cfg;
     }
 
+    /**
+     * Поиск share по имени.
+     * НИКОГДА не возвращает root share — только явные shares
+     * с непустым именем.
+     */
     public Share findShare(String name) {
+        if (name == null || name.isEmpty()) return null;
         for (Share sh : shares) {
+            if (sh.isRoot()) continue;
             if (sh.name.equals(name)) return sh;
+        }
+        return null;
+    }
+
+    /**
+     * Возвращает root share (share с пустым именем) или null.
+     */
+    public Share findRootShare() {
+        for (Share sh : shares) {
+            if (sh.isRoot()) return sh;
         }
         return null;
     }

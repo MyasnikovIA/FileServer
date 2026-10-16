@@ -1,5 +1,5 @@
 // ============================================================
-// Модалка подключения к БД (глобально или для одной панели).
+// Модалка подключения к FileServer (глобально или для панели).
 // ============================================================
 
 FAR.connModalSide = null;
@@ -11,11 +11,7 @@ FAR.openConnModal = function (required, side) {
     const modal = document.getElementById('connModal');
     const def = FAR.getConnDefaultsForSide(FAR.connModalSide);
 
-    const typeSel = document.getElementById('connType');
-    if (typeSel) typeSel.value = def.type || 'couchdb';
-
     document.getElementById('connUrl').value  = def.url  || '';
-    document.getElementById('connDb').value   = def.db   || '';
     document.getElementById('connUser').value = def.user || '';
     document.getElementById('connPass').value = def.pass || '';
     document.getElementById('connError').textContent = '';
@@ -24,8 +20,7 @@ FAR.openConnModal = function (required, side) {
     document.getElementById('connCloseBtn').style.display  = required ? 'none' : '';
     document.getElementById('connCancelBtn').style.display = required ? 'none' : '';
 
-    FAR._connModalUpdateFields();
-
+    // Режим работы — только для глобального подключения
     const modeRow = document.getElementById('connUiModeRow');
     const modeSel = document.getElementById('connUiMode');
     if (modeRow && modeSel) {
@@ -50,7 +45,7 @@ FAR.openConnModal = function (required, side) {
         if (tgtNameEl) tgtNameEl.textContent =
             FAR.connModalSide === 'left' ? 'Левая' : 'Правая';
     } else {
-        if (titleEl) titleEl.textContent = '🔐 Подключение к FileBD';
+        if (titleEl) titleEl.textContent = '🔐 Подключение к FileServer';
         if (tgtEl) tgtEl.style.display = 'none';
     }
 
@@ -58,37 +53,13 @@ FAR.openConnModal = function (required, side) {
     setTimeout(function () { document.getElementById('connUrl').focus(); }, 50);
 };
 
-FAR._connModalUpdateFields = function () {
-    const typeSel = document.getElementById('connType');
-    const type = typeSel ? (typeSel.value || 'couchdb') : 'couchdb';
-
-    const dbRow   = document.getElementById('connDbRow');
-    const urlLbl  = document.getElementById('connUrlLabel');
-    const urlIn   = document.getElementById('connUrl');
-
-    if (type === 'filesystem') {
-        if (dbRow)   dbRow.style.display   = 'none';
-        if (urlLbl)  urlLbl.textContent    = 'Адрес FileServer';
-        if (urlIn)   urlIn.placeholder     = 'http://localhost:8080';
-    } else {
-        if (dbRow)   dbRow.style.display   = '';
-        if (urlLbl)  urlLbl.textContent    = 'Адрес БД (с портом)';
-        if (urlIn)   urlIn.placeholder     = 'http://192.168.15.20:5984';
-    }
-};
-
-FAR.closeConnModal = function() {
+FAR.closeConnModal = function () {
     if (FAR.connModalRequired) return;
     document.getElementById('connModal').classList.add('hidden');
 };
 
 FAR.submitConnModal = async function () {
-    const typeSel = document.getElementById('connType');
-    const type = typeSel ? (typeSel.value || 'couchdb') : 'couchdb';
-
     const url  = document.getElementById('connUrl').value.trim();
-    const dbn  = type === 'couchdb'
-        ? document.getElementById('connDb').value.trim() : '';
     const user = document.getElementById('connUser').value.trim();
     const pass = document.getElementById('connPass').value;
 
@@ -101,13 +72,9 @@ FAR.submitConnModal = async function () {
     const errEl = document.getElementById('connError');
     errEl.textContent = '';
 
-    if (!url) { errEl.textContent = 'Укажите адрес'; return; }
-    if (type === 'couchdb' && !dbn) {
-        errEl.textContent = 'Укажите имя базы данных';
-        return;
-    }
+    if (!url) { errEl.textContent = 'Укажите адрес FileServer'; return; }
 
-    const cfg = { type: type, url: url, db: dbn, user: user, pass: pass };
+    const cfg = { url: url, user: user, pass: pass };
     const btn = document.getElementById('connConnectBtn');
     btn.disabled = true;
     btn.textContent = 'Подключение…';
@@ -154,7 +121,7 @@ FAR.submitConnModal = async function () {
         let msg = e && e.message ? e.message : String(e);
         if (e && e.status === 401) msg = 'Неверный логин или пароль (401)';
         if (e && e.status === 404) msg = 'Не найдено (404). Проверьте адрес.';
-        if (e && e.name === 'TypeError') msg = 'Не удалось подключиться (сеть/CORS). Проверьте адрес.';
+        if (e && e.name === 'TypeError') msg = 'Не удалось подключиться (сеть/CORS).';
         errEl.textContent = '❌ ' + msg;
         btn.disabled = false;
         btn.textContent = 'Подключиться';

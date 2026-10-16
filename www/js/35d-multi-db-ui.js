@@ -13,10 +13,8 @@ FAR.updateConnIndicators = function () {
         const pathEl = document.getElementById(side === 'left' ? 'pathLeft' : 'pathRight');
         if (!pathEl) return;
         const s = FAR.side[side];
-        const label = s && s.conn
-            ? (s.conn.db + '@' + (s.conn.url || '').replace(/^https?:\/\//, ''))
-            : '— не подключено —';
-        pathEl.title = 'БД: ' + label + '\nКлик — сменить БД для этой панели';
+        const label = (s && s.conn) ? FAR.connLabel(s.conn) : '— не подключено —';
+        pathEl.title = 'Источник: ' + label + '\nКлик — сменить сервер для этой панели';
     });
 };
 

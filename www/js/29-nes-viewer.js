@@ -144,7 +144,7 @@ FAR.openNesViewer = async function(item, side) {
 
     root.innerHTML = '';
 
-    // === ШАГ 1: загрузить JSNES (динамически, если ещё не загружен) ===
+    // === ШАГ 1: загрузить JSNES ===
     let jsnesLib = null;
     try {
         jsnesLib = await FAR._loadJsnesDynamically();
@@ -155,7 +155,7 @@ FAR.openNesViewer = async function(item, side) {
         return;
     }
 
-    // === ШАГ 2: загрузить ROM из PouchDB конкретной панели ===
+    // === ШАГ 2: загрузить ROM ===
     loadingText.textContent = 'Загрузка ROM…';
     let romBuffer = null;
     try {
@@ -169,7 +169,13 @@ FAR.openNesViewer = async function(item, side) {
         return;
     }
 
-    // Даём модалке отрисоваться
+    // Диагностика
+    try {
+        const head = Array.from(romBuffer.slice(0, 16))
+            .map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log('[NES] ROM header:', head);
+    } catch (e) { /* ignore */ }
+
     await new Promise(function(resolve) { setTimeout(resolve, 30); });
 
     // === ШАГ 3: создаём эмулятор и запускаем игру ===
@@ -184,18 +190,12 @@ FAR.openNesViewer = async function(item, side) {
             }
         });
 
-        // Приводим Uint8Array → ArrayBuffer
-        let romData = romBuffer;
-        if (romBuffer && romBuffer.buffer && romBuffer.byteOffset !== undefined) {
-            romData = romBuffer.buffer.slice(
-                romBuffer.byteOffset,
-                romBuffer.byteOffset + romBuffer.byteLength
-            );
-        }
+        // ============================================================
+        // ВАЖНО: передаём Uint8Array напрямую.
+        // См. комментарий в 45-wm-bridge.js#_mountNesViewer.
+        // ============================================================
+        FAR._nesBrowser.loadROM(romBuffer);
 
-        FAR._nesBrowser.loadROM(romData);
-
-        // Регулируем размер canvas после загрузки
         setTimeout(function() {
             try { FAR._nesBrowser && FAR._nesBrowser.fitInParent(); } catch (e) {}
         }, 100);

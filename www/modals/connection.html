@@ -1,7 +1,7 @@
 <div id="connModal" class="modal-overlay hidden">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <h3 id="connTitle">🔐 Подключение к FileBD</h3>
+            <h3 id="connTitle">🔐 Подключение к FileServer</h3>
             <button class="close-btn" id="connCloseBtn" onclick="FAR.closeConnModal()" style="display:none;">✕</button>
         </div>
         <div class="modal-body">
@@ -11,31 +11,18 @@
                 </div>
 
                 <div class="conn-field">
-                    <label for="connType">Тип источника</label>
-                    <select id="connType" onchange="FAR._connModalUpdateFields()">
-                        <option value="couchdb">🗄️ CouchDB / PouchDB (удалённый сервер)</option>
-                        <option value="filesystem">💾 Локальный диск (FileServer.java)</option>
-                    </select>
+                    <label for="connUrl">Адрес FileServer</label>
+                    <input type="text" id="connUrl" placeholder="http://127.0.0.1:8080" autocomplete="off">
                 </div>
 
                 <div class="conn-field">
-                    <label for="connUrl" id="connUrlLabel">Адрес БД (с портом)</label>
-                    <input type="text" id="connUrl" placeholder="http://192.168.15.20:5984" autocomplete="off">
-                </div>
-
-                <div class="conn-field" id="connDbRow">
-                    <label for="connDb">Имя базы данных</label>
-                    <input type="text" id="connDb" placeholder="FileBD" autocomplete="off">
-                </div>
-
-                <div class="conn-field" id="connUserRow">
                     <label for="connUser">Имя пользователя</label>
-                    <input type="text" id="connUser" placeholder="username" autocomplete="username">
+                    <input type="text" id="connUser" placeholder="admin" autocomplete="username">
                 </div>
 
-                <div class="conn-field" id="connPassRow">
-                    <label for="connPass">Пароль пользователя</label>
-                    <input type="password" id="connPass" placeholder="password" autocomplete="current-password">
+                <div class="conn-field">
+                    <label for="connPass">Пароль</label>
+                    <input type="password" id="connPass" placeholder="••••••••" autocomplete="current-password">
                 </div>
 
                 <div class="conn-field" id="connUiModeRow">
@@ -48,7 +35,8 @@
 
                 <div class="conn-error" id="connError"></div>
                 <div class="conn-hint">
-                    После подключения вы увидите только те каталоги, к которым у вас есть доступ.
+                    Данные подключения сохраняются в LocalStorage браузера.
+                    Токен доступа живёт 24 часа.
                 </div>
                 <div class="conn-actions">
                     <button class="btn-cancel" onclick="FAR.closeConnModal()" id="connCancelBtn">Отмена</button>
