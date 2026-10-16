@@ -1,0 +1,45 @@
+<div id="progressOverlay" class="progress-overlay hidden">
+    <div class="progress-content">
+        <div class="progress-header">
+            <div class="progress-title">
+                <span class="op-icon" id="progressIcon">📋</span>
+                <span id="progressTitle">Операция</span>
+            </div>
+            <div class="progress-actions">
+                <button onclick="FAR.minimizeProgress()" title="Свернуть">▼ Свернуть</button>
+            </div>
+        </div>
+        <div class="progress-body">
+            <div class="progress-stats">
+                <span>
+                    <span class="done" id="progressDone">0</span> /
+                    <span id="progressTotal">0</span>
+                    <span class="errors" id="progressErrors"></span>
+                </span>
+                <span class="percent" id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-current" id="progressCurrent">—</div>
+            <div class="progress-log" id="progressLog"></div>
+        </div>
+        <div class="progress-footer">
+            <button class="btn-cancel" id="progressCancelBtn" onclick="FAR.cancelProgress()">⛔ Отмена</button>
+            <button class="btn-close" id="progressCloseBtn" onclick="FAR.closeProgress()" disabled>✓ Готово</button>
+        </div>
+    </div>
+</div>
+
+<div id="progressMini" class="progress-mini hidden" onclick="FAR.restoreProgress()">
+    <div class="mini-title">
+        <span id="miniIcon">📋</span>
+        <span id="miniTitle">Операция</span>
+        <span class="mini-close" onclick="event.stopPropagation(); FAR.closeProgress()">✕</span>
+    </div>
+    <div class="mini-bar"><div class="mini-fill" id="miniFill"></div></div>
+    <div class="mini-stats">
+        <span id="miniProgress">0 / 0</span>
+        <span id="miniPercent">0%</span>
+    </div>
+</div>

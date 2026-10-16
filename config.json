@@ -1,0 +1,82 @@
+{
+  "http": {
+    "port": 8080,
+    "host": "0.0.0.0"
+  },
+
+  "web": "www",
+
+  "users": [
+    {
+      "name": "admin",
+      "password": "admin123",
+      "quota": -1
+    },
+    {
+      "name": "olga",
+      "password": "olga2024",
+      "quota": 500
+    },
+    {
+      "name": "guest",
+      "password": "",
+      "quota": 100
+    }
+  ],
+
+  "shares": [
+    {
+      "name": "Documents",
+      "physical": "C:/data/docs",
+      "type": "folder",
+      "access": ["read", "write", "delete"],
+      "anonymous": false,
+      "users": ["admin", "olga"],
+      "quota": 200
+    },
+    {
+      "name": "test",
+      "physical": "C:/JavaProject/FileServer/DATA",
+      "type": "folder",
+      "access": ["read", "write", "delete"],
+      "anonymous": true,
+      "users": ["admin", "olga"],
+      "quota": 200
+    },
+    {
+      "name": "Photos",
+      "physical": "E:/Photos",
+      "type": "folder",
+      "access": ["read", "write"],
+      "anonymous": false,
+      "users": ["admin"],
+      "quota": -1
+    },
+    {
+      "name": "PublicReports",
+      "physical": "D:/Reports/2024",
+      "type": "folder",
+      "access": ["read"],
+      "anonymous": true,
+      "users": [],
+      "quota": -1
+    },
+    {
+      "name": "logo.png",
+      "physical": "D:/Public/logo.png",
+      "type": "file",
+      "access": ["read"],
+      "anonymous": true,
+      "users": []
+    },
+    {
+      "name": "Incoming",
+      "physical": "D:/Uploads",
+      "type": "folder",
+      "access": ["read", "write"],
+      "anonymous": false,
+      "users": ["guest"],
+      "quota": 50
+    }
+  ]
+}
