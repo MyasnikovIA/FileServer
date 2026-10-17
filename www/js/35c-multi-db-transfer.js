@@ -11,6 +11,17 @@
 //   • Файловая система работает через атомарную запись:
 //     либо файл создан полностью, либо не создан вовсе.
 
+// ============================================================
+// Мульти-БД: операции между панелями.
+//
+// Если обе панели на ОДНОМ сервере — используем серверный
+// /api/copy или /api/move (нативный Files.copy / Files.move).
+// Это быстрее, атомарнее и корректно считает квоту.
+//
+// Если серверы разные (или на одном сервере разные токены/сессии,
+// дающие разный уровень доступа) — старый путь через
+// readFileBodyFromSide + putAttachment (клиентский round-trip).
+// ============================================================
 FAR.transferBetweenSides = async function (mode) {
     const src = FAR.activePanel;
     const dst = src === 'left' ? 'right' : 'left';
@@ -23,12 +34,96 @@ FAR.transferBetweenSides = async function (mode) {
     const selected = FAR.getSelectedItemsFromActivePanel();
     if (selected.length === 0) { FAR.toast('Ничего не выбрано', 'warning'); return; }
 
-    const sameDb = (sSrc.fullUrl && sDst.fullUrl && sSrc.fullUrl === sDst.fullUrl);
-    const targetPath = FAR.normPath(sDst.path);
+    const sameServer = (sSrc.db.baseUrl && sDst.db.baseUrl &&
+        sSrc.db.baseUrl === sDst.db.baseUrl);
 
     // ============================================================
-    // 1. Разворачиваем выделение в плоский список задач
+    // Быстрый путь: один сервер — серверный /api/copy | /api/move
     // ============================================================
+    if (sameServer) {
+        return FAR._transferViaServerApi(mode, selected, sSrc, sDst, src, dst);
+    }
+
+    // ============================================================
+    // Медленный путь: разные серверы — читаем и пишем пофайлово
+    // ============================================================
+    return FAR._transferViaClient(mode, selected, sSrc, sDst, src, dst);
+};
+
+// ============================================================
+// Быстрый путь: серверный /api/copy | /api/move
+// ============================================================
+FAR._transferViaServerApi = async function (mode, selected, sSrc, sDst, src, dst) {
+    const targetPath = FAR.normPath(sDst.path);
+    const actionLabel = mode === 'move' ? 'Перенос' : 'Копирование';
+    const endpoint = mode === 'move' ? '/api/move' : '/api/copy';
+
+    // Для каждого выбранного элемента — один POST /api/copy|move
+    FAR.startProgress(
+        mode === 'move' ? '✂️' : '📋',
+        actionLabel + ': ' + selected.length + ' элем. → ' +
+        (dst === 'left' ? 'левая' : 'правая') + ' (сервер)',
+        selected.length,
+        function () {}
+    );
+    await FAR._nextPaint();
+
+    let ok = 0, err = 0;
+
+    for (let i = 0; i < selected.length; i++) {
+        if (FAR.progress.cancelled) break;
+        const item = selected[i].item;
+        const srcPath = FAR.normPath(item.path);
+        const itemName = item.name || srcPath.split('/').pop();
+        const dstPath = FAR.normPath(
+            targetPath ? targetPath + '/' + itemName : itemName
+        );
+
+        FAR.updateProgress(i, selected.length, srcPath, err);
+        FAR.progressLog((mode === 'move' ? '✂️ ' : '📋 ') + srcPath, 'info');
+
+        try {
+            const url = sDst.db._url(endpoint, { from: srcPath, to: dstPath });
+            const res = await sDst.db._fetch(url, { method: 'POST' });
+            if (!res.ok) {
+                const msg = await FAR.FsClient._errorFromResponse(res);
+                const e = new Error(msg);
+                e.status = res.status;
+                throw e;
+            }
+            ok++;
+            FAR.progressLog('✅ ' + dstPath, 'ok');
+        } catch (e) {
+            err++;
+            FAR.progressLog('❌ ' + srcPath + ': ' + e.message, 'err');
+        }
+        FAR.updateProgress(i + 1, selected.length, srcPath, err);
+    }
+
+    // Сброс выделения и перезагрузка панелей
+    if (mode === 'move') {
+        sSrc.selectedIdx.clear();
+        sSrc.anchor = -1;
+        sSrc.cursor = -1;
+    }
+
+    FAR.finishProgress(err);
+    FAR.progressLog('━━━ Готово: ' + ok + ', ошибок: ' + err, ok > 0 ? 'ok' : 'err');
+
+    await FAR.reloadPanel('left');
+    await FAR.reloadPanel('right');
+
+    FAR.setStatus('✅ ' + actionLabel + ': ' + ok + ', ошибок: ' + err);
+    FAR.toast(actionLabel + ' ' + ok + ' из ' + selected.length, ok ? 'success' : 'error');
+};
+
+// ============================================================
+// Медленный путь: разные серверы — read + write через клиент
+// ============================================================
+FAR._transferViaClient = async function (mode, selected, sSrc, sDst, src, dst) {
+    const targetPath = FAR.normPath(sDst.path);
+
+    // Разворачиваем выделение в список задач
     const folderTasks = [];
     const fileTasks   = [];
     const srcItemsToRemove = [];
@@ -43,10 +138,8 @@ FAR.transferBetweenSides = async function (mode) {
                 targetPath ? targetPath + '/' + folderName : folderName
             );
 
-            // Сама папка
             folderTasks.push({ srcPath: srcFolderPath, dstPath: dstFolderPath });
 
-            // РЕКУРСИВНЫЙ обход из БД (ленивая загрузка!)
             const children = await FAR.listRecursiveFromSide(src, srcFolderPath);
             const prefix = srcFolderPath + '/';
 
@@ -64,7 +157,6 @@ FAR.transferBetweenSides = async function (mode) {
                 }
             }
         } else {
-            // Обычный файл
             const fileName = item.name;
             const dstPath = FAR.normPath(
                 targetPath ? targetPath + '/' + fileName : fileName
@@ -84,51 +176,34 @@ FAR.transferBetweenSides = async function (mode) {
     uniqueFolders.sort(function (a, b) { return a.dstPath.length - b.dstPath.length; });
 
     const totalSteps = uniqueFolders.length + fileTasks.length;
-
     const actionLabel = mode === 'move' ? 'Перенос' : 'Копирование';
-    const sameLabel = sameDb ? ' (одна БД)' : ' (разные БД)';
 
     FAR.startProgress(
         mode === 'move' ? '✂️' : '📋',
         actionLabel + ': ' + selected.length + ' элем. → ' +
-        (dst === 'left' ? 'левая' : 'правая') + ' (' + sDst.conn.db + ')',
+        (dst === 'left' ? 'левая' : 'правая') + ' (разные серверы)',
         totalSteps,
         function () {}
     );
+    await FAR._nextPaint();
 
     let ok = 0, err = 0, step = 0;
 
-    // ============================================================
-    // 2. Создаём папки в целевой БД
-    // ============================================================
+    // 1. Папки
     for (const f of uniqueFolders) {
         if (FAR.progress.cancelled) break;
         step++;
         FAR.updateProgress(step - 1, totalSteps, '📁 ' + f.dstPath, err);
-        FAR.progressLog('📁 ' + f.dstPath + sameLabel, 'info');
 
         try {
             const docId = 'd:' + encodeURIComponent(f.dstPath);
             const folderName = f.dstPath.split('/').pop();
-
             let rev = null;
-            try {
-                const existing = await sDst.db.get(docId);
-                rev = existing._rev;
-            } catch (e) {
-                if (e.status !== 404) throw e;
-            }
-
-            const doc = {
-                _id: docId,
-                type: 'folder',
-                path: f.dstPath,
-                name: folderName,
-                mtime: Date.now()
-            };
+            try { const existing = await sDst.db.get(docId); rev = existing._rev; }
+            catch (e) { if (e.status !== 404) throw e; }
+            const doc = { _id: docId, type: 'folder', path: f.dstPath, name: folderName, mtime: Date.now() };
             if (rev) doc._rev = rev;
             await sDst.db.put(doc);
-
             ok++;
             FAR.progressLog('✅ ' + f.dstPath, 'ok');
         } catch (e) {
@@ -138,36 +213,22 @@ FAR.transferBetweenSides = async function (mode) {
         FAR.updateProgress(step, totalSteps, '📁 ' + f.dstPath, err);
     }
 
-    // ============================================================
-    // 3. Копируем файлы.
-    //
-    // АТОМАРНО: один PUT /api/write с содержимым файла.
-    // Если запись не удалась (например, 507 quota) — файла на
-    // диске не будет вообще. Раньше делалось два шага
-    // (put пустого + putAttachment), из-за чего при 507
-    // оставался пустой файл размером 0 байт.
-    // ============================================================
+    // 2. Файлы
     for (let i = 0; i < fileTasks.length; i++) {
         if (FAR.progress.cancelled) break;
         const t = fileTasks[i];
         step++;
         FAR.updateProgress(step - 1, totalSteps, t.dstPath, err);
-        FAR.progressLog((mode === 'move' ? '✂️ ' : '📋 ') + t.dstPath + sameLabel, 'info');
+        FAR.progressLog((mode === 'move' ? '✂️ ' : '📋 ') + t.dstPath, 'info');
 
         try {
             const res = await FAR.readFileBodyFromSide(src, t.srcItem);
             const blob = new Blob([res.data], { type: res.contentType });
             const newId = 'f:' + encodeURIComponent(t.dstPath);
-
-            // Один запрос — запись всего содержимого файла.
-            // Существующий файл будет перезаписан.
             await sDst.db.putAttachment(newId, 'b', null, blob,
                 res.contentType || 'application/octet-stream');
 
-            if (mode === 'move') {
-                srcItemsToRemove.push(t.srcItem._id);
-            }
-
+            if (mode === 'move') srcItemsToRemove.push(t.srcItem._id);
             ok++;
             FAR.progressLog('✅ ' + t.dstPath, 'ok');
         } catch (e) {
@@ -177,12 +238,9 @@ FAR.transferBetweenSides = async function (mode) {
         FAR.updateProgress(step, totalSteps, t.dstPath, err);
     }
 
-    // ============================================================
-    // 4. Режим move: удаляем исходные документы из БД-источника
-    // ============================================================
+    // 3. Для move — удаление из источника
     if (mode === 'move' && !FAR.progress.cancelled && srcItemsToRemove.length > 0) {
         FAR.progressLog('🗑️ Удаление из источника: ' + srcItemsToRemove.length + ' док.', 'info');
-
         for (const srcId of srcItemsToRemove) {
             try {
                 const doc = await sSrc.db.get(srcId);
@@ -192,24 +250,14 @@ FAR.transferBetweenSides = async function (mode) {
                 FAR.progressLog('⚠️ не удалён ' + srcId + ': ' + e.message, 'warn');
             }
         }
-
-        // Удаляем исходные папки (снизу вверх, чтобы вложенные
-        // удалились раньше родителей)
         const folderIdsToRemove = selected
             .filter(function (sel) { return sel.item.isFolder; })
             .map(function (sel) { return sel.item._id; });
-
         folderIdsToRemove.sort(function (a, b) { return b.length - a.length; });
-
         for (const fid of folderIdsToRemove) {
-            try {
-                const doc = await sSrc.db.get(fid);
-                await sSrc.db.remove(doc);
-            } catch (e) {
-                // уже удалена — ок
-            }
+            try { const doc = await sSrc.db.get(fid); await sSrc.db.remove(doc); }
+            catch (e) { /* уже удалена */ }
         }
-
         sSrc.selectedIdx.clear();
         sSrc.anchor = -1;
         sSrc.cursor = -1;
@@ -218,8 +266,6 @@ FAR.transferBetweenSides = async function (mode) {
     FAR.finishProgress(err);
     FAR.progressLog('━━━ Готово: ' + ok + ', ошибок: ' + err, ok > 0 ? 'ok' : 'err');
 
-    // Перезагружаем обе панели (ленивая загрузка — надо перечитать
-    // директории, т.к. в БД могли появиться/исчезнуть документы)
     await FAR.reloadPanel('left');
     await FAR.reloadPanel('right');
 

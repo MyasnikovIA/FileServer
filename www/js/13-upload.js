@@ -42,6 +42,8 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
         function() {}
     );
 
+    await FAR._nextPaint();
+
     let ok = 0, err = 0, step = 0;
 
     // ============================================================

@@ -467,12 +467,15 @@ public class ApiHandler implements HttpHandler {
         String vpath = q.getOrDefault("path", "");
         String norm = FileService.normalize(vpath);
         if (norm.isEmpty()) { FileServer.sendError(ex, 400, "path is required"); return; }
+
         VirtualResolver.Resolved r = VirtualResolver.resolve(
                 FileServer.auth(), s, norm, "write");
         if (r.share.isFile() && !r.relPath.isEmpty()) {
             FileServer.sendError(ex, 400, "Cannot write into a file share");
             return;
         }
+
+        // Читаем тело запроса целиком
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         try (InputStream is = ex.getRequestBody()) {
             byte[] tmp = new byte[16384];
@@ -480,17 +483,50 @@ public class ApiHandler implements HttpHandler {
             while ((n = is.read(tmp)) > 0) buf.write(tmp, 0, n);
         }
         byte[] data = buf.toByteArray();
+
+        // Проверка квоты — ДО записи
         long existingSize = 0;
         if (Files.isRegularFile(r.physicalPath)) existingSize = Files.size(r.physicalPath);
         long delta = data.length - existingSize;
         FileServer.quota().checkWriteQuota(r.share, s, delta);
+
+        // Готовим родительский каталог
         Path parent = r.physicalPath.getParent();
         if (parent != null && !Files.exists(parent)) Files.createDirectories(parent);
-        Files.write(r.physicalPath, data,
-                java.nio.file.StandardOpenOption.CREATE,
-                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
-                java.nio.file.StandardOpenOption.WRITE);
+
+        // ============================================================
+        // АТОМАРНАЯ ЗАПИСЬ.
+        //
+        // Пишем во временный файл в том же каталоге, затем
+        // переименовываем (ATOMIC_MOVE) в целевой путь. Так
+        // исключается появление файлов нулевого размера, если
+        // запись оборвалась (кончилось место, упал процесс,
+        // пришёл RST и т.п.).
+        //
+        // Если ФС не поддерживает ATOMIC_MOVE (FAT32, некоторые
+        // сетевые ФС) — откатываемся к обычному move с REPLACE_EXISTING.
+        // ============================================================
+        Path tempFile = Files.createTempFile(
+                parent != null ? parent : r.physicalPath.getParent(),
+                ".far-write-", ".tmp");
+        try {
+            Files.write(tempFile, data,
+                    java.nio.file.StandardOpenOption.WRITE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(tempFile, r.physicalPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException amnse) {
+                Files.move(tempFile, r.physicalPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
+        }
+
         FileServer.quota().invalidate(r.share);
+
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
         ok.put("path", norm);
@@ -543,25 +579,43 @@ public class ApiHandler implements HttpHandler {
     }
 
     private void handleMove(HttpExchange ex, String method, Map<String, String> q,
-                            AuthService.Session s) throws IOException {
+                            AuthService.Session s)
+            throws IOException, QuotaService.QuotaExceededException {
         if (!"POST".equals(method)) { FileServer.sendError(ex, 405, "Method not allowed"); return; }
         String fromV = FileService.normalize(q.getOrDefault("from", ""));
         String toV   = FileService.normalize(q.getOrDefault("to", ""));
         if (fromV.isEmpty() || toV.isEmpty()) {
             FileServer.sendError(ex, 400, "from and to are required"); return;
         }
+
         VirtualResolver.Resolved rf = VirtualResolver.resolve(
                 FileServer.auth(), s, fromV, "delete");
         VirtualResolver.Resolved rt = VirtualResolver.resolve(
                 FileServer.auth(), s, toV, "write");
+
+        if (!Files.exists(rf.physicalPath)) {
+            FileServer.sendError(ex, 404, "Source not found: " + fromV);
+            return;
+        }
+
+        // ============================================================
+        // Проверка квоты нужна ТОЛЬКО при переносе между разными шарами:
+        // размер целевой шары растёт, исходной — уменьшается.
+        // При переносе внутри одной шары (переименование) итоговый
+        // размер не меняется, проверка не нужна.
+        // ============================================================
         if (rf.share != rt.share) {
+            long srcSize = FileService.sizeOf(rf.physicalPath);
+            FileServer.quota().checkWriteQuota(rt.share, s, srcSize);
             copyAcrossShares(rf, rt);
             FileService.delete(rf.share.physicalPath(), rf.relPath);
         } else {
             FileService.move(rf.share.physicalPath(), rf.relPath, rt.relPath);
         }
+
         FileServer.quota().invalidate(rf.share);
         FileServer.quota().invalidate(rt.share);
+
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
         ok.put("from", fromV);
@@ -570,23 +624,41 @@ public class ApiHandler implements HttpHandler {
     }
 
     private void handleCopy(HttpExchange ex, String method, Map<String, String> q,
-                            AuthService.Session s) throws IOException {
+                            AuthService.Session s)
+            throws IOException, QuotaService.QuotaExceededException {
         if (!"POST".equals(method)) { FileServer.sendError(ex, 405, "Method not allowed"); return; }
         String fromV = FileService.normalize(q.getOrDefault("from", ""));
         String toV   = FileService.normalize(q.getOrDefault("to", ""));
         if (fromV.isEmpty() || toV.isEmpty()) {
             FileServer.sendError(ex, 400, "from and to are required"); return;
         }
+
         VirtualResolver.Resolved rf = VirtualResolver.resolve(
                 FileServer.auth(), s, fromV, "read");
         VirtualResolver.Resolved rt = VirtualResolver.resolve(
                 FileServer.auth(), s, toV, "write");
+
+        if (!Files.exists(rf.physicalPath)) {
+            FileServer.sendError(ex, 404, "Source not found: " + fromV);
+            return;
+        }
+
+        // ============================================================
+        // Проверка квоты. При копировании размер ЦЕЛЕВОГО share растёт
+        // на весь размер источника (даже если шары совпадают — копия
+        // добавляет srcSize байт сверх уже занятого).
+        // ============================================================
+        long srcSize = FileService.sizeOf(rf.physicalPath);
+        FileServer.quota().checkWriteQuota(rt.share, s, srcSize);
+
         if (rf.share != rt.share) {
             copyAcrossShares(rf, rt);
         } else {
             FileService.copy(rf.share.physicalPath(), rf.relPath, rt.relPath);
         }
+
         FileServer.quota().invalidate(rt.share);
+
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
         ok.put("from", fromV);

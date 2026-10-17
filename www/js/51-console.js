@@ -80,6 +80,12 @@ FAR.closeConsoleOutside = function (e) {
 //
 // Строит UI и подключает EventSource. Возвращает API-объект.
 
+// ------------------------------------------------------------
+// ЯДРО: FAR._createConsole(hostEl, opts)
+// ------------------------------------------------------------
+//
+// Строит UI и подключает EventSource. Возвращает API-объект.
+
 FAR._createConsole = function (hostEl, opts) {
     if (!hostEl) throw new Error('_createConsole: hostEl required');
     opts = opts || {};
@@ -91,6 +97,7 @@ FAR._createConsole = function (hostEl, opts) {
         '<span class="dot"></span>' +
         '<span data-role="statusText">Подключение…</span>' +
         '</div>' +
+        '<button class="console-btn" data-role="copy" title="Скопировать весь диалог в буфер обмена">📋 Скопировать</button>' +
         '<button class="console-btn" data-role="clear" title="Очистить">🧹 Очистить</button>' +
         '<button class="console-btn" data-role="kill" title="Прервать текущую команду">⛔ Прервать</button>' +
         '<button class="console-btn" data-role="disconnect" title="Разорвать соединение">🔌 Отключиться</button>' +
@@ -108,6 +115,7 @@ FAR._createConsole = function (hostEl, opts) {
     const $ = (sel) => hostEl.querySelector(sel);
     const elStatus    = $('[data-role="status"]');
     const elStatusTxt = $('[data-role="statusText"]');
+    const elCopy      = $('[data-role="copy"]');
     const elClear     = $('[data-role="clear"]');
     const elKill      = $('[data-role="kill"]');
     const elDisc      = $('[data-role="disconnect"]');
@@ -136,9 +144,46 @@ FAR._createConsole = function (hostEl, opts) {
         span.textContent = text;
         elOutput.appendChild(span);
 
-        // Автоскролл, если пользователь не отмотал вверх
         const nearBottom = (elOutput.scrollHeight - elOutput.scrollTop - elOutput.clientHeight) < 40;
         if (nearBottom) elOutput.scrollTop = elOutput.scrollHeight;
+    }
+
+    // ---- Копирование диалога в буфер обмена ----
+    function copyTranscript() {
+        // Берём весь текст из output (там уже есть и эхо команд "$ cmd",
+        // которое присылает сервер, и весь вывод, и сообщения об ошибках).
+        const text = (elOutput.innerText || elOutput.textContent || '');
+        if (!text.trim()) {
+            FAR.toast('Нечего копировать', 'info');
+            return;
+        }
+
+        const done = function () {
+            FAR.toast('Диалог скопирован в буфер обмена', 'success');
+            // Небольшая визуальная обратная связь
+            const old = elCopy.textContent;
+            elCopy.textContent = '✓ Скопировано';
+            setTimeout(function () { elCopy.textContent = old; }, 1200);
+        };
+
+        const fallback = function () {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;left:-99999px;top:-99999px;';
+            document.body.appendChild(ta);
+            ta.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) {}
+            document.body.removeChild(ta);
+            if (ok) done();
+            else FAR.toast('Не удалось скопировать', 'error');
+        };
+
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(text).then(done).catch(fallback);
+        } else {
+            fallback();
+        }
     }
 
     // ---- EventSource ----
@@ -190,7 +235,6 @@ FAR._createConsole = function (hostEl, opts) {
         });
 
         es.addEventListener('error', function (e) {
-            // Сервер прислал ошибку в data (JSON)
             if (e.data) {
                 try {
                     const d = JSON.parse(e.data);
@@ -198,7 +242,6 @@ FAR._createConsole = function (hostEl, opts) {
                 } catch (err) { /* ignore */ }
                 return;
             }
-            // Транспортная ошибка — браузер сам переподключится
             if (S.connected) {
                 setStatus('Переподключение…', 'loading');
                 S.connected = false;
@@ -241,10 +284,6 @@ FAR._createConsole = function (hostEl, opts) {
 
         S.busy = true;
 
-        // Локальное эхо (сервер тоже отправит $ command)
-        // Если хотите без дубля — удалите эту строку.
-        // appendLine('$ ' + command + '\n', 'system');
-
         try {
             const res = await fetch(baseUrl + '/api/console/exec', {
                 method: 'POST',
@@ -273,7 +312,6 @@ FAR._createConsole = function (hostEl, opts) {
             const cmd = elInput.value;
             elInput.value = '';
             if (cmd.trim()) {
-                // История
                 S.history.push(cmd);
                 S.historyIdx = S.history.length;
                 sendCommand(cmd);
@@ -305,16 +343,13 @@ FAR._createConsole = function (hostEl, opts) {
     });
 
     // ---- Кнопки ----
+    elCopy.addEventListener('click', copyTranscript);
+
     elClear.addEventListener('click', function () {
         elOutput.innerHTML = '';
     });
 
     elKill.addEventListener('click', function () {
-        // Отправляем безобидную команду «Ctrl+C»:
-        // сервер просто убьёт текущий процесс, если он жив
-        // (см. ConsoleSession.execute → destroyForcibly).
-        // Более чистый вариант — добавить /api/console/kill,
-        // но в текущей реализации достаточно команды пустой.
         FAR.toast('Функция «Прервать» пока не поддерживается сервером', 'info');
     });
 
@@ -328,6 +363,7 @@ FAR._createConsole = function (hostEl, opts) {
     // ---- API ----
     return {
         getState: function () { return S; },
+        copyTranscript: copyTranscript,
         destroy: function () {
             S.destroyed = true;
             if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }

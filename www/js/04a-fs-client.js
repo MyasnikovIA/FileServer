@@ -99,6 +99,47 @@ FAR.FsClient.prototype._entryToDoc = function (entry, kind) {
     };
 };
 
+// ============================================================
+// Разбор тела ответа об ошибке.
+//
+// Для 507 (квота) сервер возвращает JSON:
+//   { error, scope, quotaMb, usedBytes, freeBytes, deltaBytes, status }
+// Для прочих ошибок — { error, status } или просто текст.
+//
+// Возвращает человекочитаемое сообщение.
+// ============================================================
+FAR.FsClient._errorFromResponse = async function (res) {
+    let msg = 'HTTP ' + res.status;
+    try {
+        const text = await res.text();
+        if (!text) return msg;
+        try {
+            const body = JSON.parse(text);
+            if (body && body.error) {
+                msg = body.error;
+                if (res.status === 507 && body.scope !== undefined) {
+                    msg += ' — шары "' + body.scope + '"';
+                    msg += ' (лимит ' + body.quotaMb + ' MB';
+                    msg += ', занято ' + FAR.formatSize(body.usedBytes || 0);
+                    msg += ', свободно ' + FAR.formatSize(body.freeBytes || 0);
+                    msg += ', нужно ' + FAR.formatSize(body.deltaBytes || 0) + ')';
+                } else if (body.message) {
+                    msg += ': ' + body.message;
+                }
+            } else if (body && body.message) {
+                msg = body.message;
+            } else if (text.length < 240) {
+                // Если JSON без known-полей — выводим как есть (компактно)
+                msg = 'HTTP ' + res.status + ' ' + text;
+            }
+        } catch (jsonErr) {
+            // Не JSON — просто текст
+            msg = text.length > 240 ? text.substring(0, 240) + '…' : text;
+        }
+    } catch (readErr) { /* ignore */ }
+    return msg;
+};
+
 // ---- info ----
 
 FAR.FsClient.prototype.info = async function () {
@@ -226,8 +267,10 @@ FAR.FsClient.prototype.put = async function (doc) {
     if (kind === 'folder') {
         const res = await this._fetch(this._url('/api/mkdir', { path: path }), { method: 'POST' });
         if (!res.ok) {
-            const body = await res.text().catch(() => '');
-            const e = new Error('HTTP ' + res.status + ' ' + body); e.status = res.status; throw e;
+            const msg = await FAR.FsClient._errorFromResponse(res);
+            const e = new Error(msg);
+            e.status = res.status;
+            throw e;
         }
         return { ok: true, id: doc._id, rev: '1-' + Date.now() };
     }
@@ -252,8 +295,10 @@ FAR.FsClient.prototype.put = async function (doc) {
         body: data
     });
     if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        const e = new Error('HTTP ' + res.status + ' ' + body); e.status = res.status; throw e;
+        const msg = await FAR.FsClient._errorFromResponse(res);
+        const e = new Error(msg);
+        e.status = res.status;
+        throw e;
     }
     return { ok: true, id: doc._id, rev: '1-' + Date.now() };
 };
@@ -324,6 +369,11 @@ FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
     return await res.text();
 };
 
+// ---- putAttachment ----
+//
+// ЕДИНАЯ АТОМАРНАЯ ЗАПИСЬ: один PUT /api/write с содержимым.
+// При превышении квоты (507) файл на диске сервера не создаётся
+// вовсе — пустых «заглушек» не остаётся.
 FAR.FsClient.prototype.putAttachment = async function (id, name, rev, blob, contentType) {
     const path = this._pathFromId(id);
     let body = blob;
@@ -334,7 +384,12 @@ FAR.FsClient.prototype.putAttachment = async function (id, name, rev, blob, cont
         headers: { 'Content-Type': contentType || 'application/octet-stream' },
         body: body
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+        const msg = await FAR.FsClient._errorFromResponse(res);
+        const err = new Error(msg);
+        err.status = res.status;
+        throw err;
+    }
     return { ok: true, id: id, rev: '1-' + Date.now() };
 };
 

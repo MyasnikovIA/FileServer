@@ -178,4 +178,25 @@ public class FileService {
             }
         }
     }
+    // ---------- подсчёт размера ----------
+//
+// Возвращает сумму размеров всех файлов под p (рекурсивно).
+// Для одного файла — его размер. Для несуществующего пути — 0.
+    public static long sizeOf(Path p) throws IOException {
+        if (p == null || !Files.exists(p)) return 0L;
+        if (Files.isRegularFile(p)) return Files.size(p);
+        final long[] total = { 0L };
+        Files.walkFileTree(p, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes a) {
+                total[0] += a.size();
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return total[0];
+    }
 }
