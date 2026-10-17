@@ -7,6 +7,8 @@ import org.json.JSONObject;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 
 public class ConsoleSession {
 
@@ -73,10 +75,20 @@ public class ConsoleSession {
             String[] cmd = { realShell };
 
             try {
+                Map<String, String> env = new HashMap<>(System.getenv());
+
+                // ВАЖНО: Говорим терминалу, что он поддерживает 256 цветов и псевдографику.
+                // Это чинит отрисовку mc, htop, vim и т.д.
+                if (!isWindows) {
+                    env.put("TERM", "xterm-256color");
+                    env.put("LANG", "C.UTF-8");
+                    env.put("LC_ALL", "C.UTF-8");
+                }
+
                 PtyProcessBuilder pb = new PtyProcessBuilder(cmd)
-                        .setEnvironment(System.getenv())
-                        .setInitialColumns(120)
-                        .setInitialRows(30);
+                        .setEnvironment(env)
+                        .setInitialColumns(80) // Начальный размер, потом JS пришлет правильный
+                        .setInitialRows(24);
 
                 if (cwd != null && !cwd.isEmpty()) {
                     File dir = new File(cwd);
@@ -85,7 +97,6 @@ public class ConsoleSession {
 
                 process = pb.start();
 
-                // Поток чтения вывода (stdout/stderr)
                 Thread readThread = new Thread(() -> {
                     byte[] buf = new byte[4096];
                     try (InputStream is = process.getInputStream()) {
@@ -101,8 +112,9 @@ public class ConsoleSession {
                 readThread.setDaemon(true);
                 readThread.start();
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 sendError("Ошибка запуска оболочки: " + e.getMessage());
+                e.printStackTrace();
             }
         }
     }
@@ -125,7 +137,7 @@ public class ConsoleSession {
             if (process != null && process.isAlive()) {
                 try {
                     process.setWinSize(new WinSize(cols, rows));
-                } catch (Exception ignored) {}
+                } catch (Throwable ignored) {}
             }
         }
     }

@@ -1,20 +1,6 @@
 // ============================================================
 // 51-console.js — встроенный терминал Console (xterm.js + PTY)
 // ============================================================
-//
-// Открывается:
-//   • в панельном режиме  — как модалка на весь экран;
-//   • в оконном режиме WM — как обычное WM-окно.
-//
-// Обмен с сервером:
-//   • EventSource  на /api/console/events?token=…  — получаем вывод;
-//   • POST         на /api/console/input           — отправляем нажатия;
-//   • POST         на /api/console/resize          — размер терминала.
-//
-// Регистрация приложения в WM выполняется динамически
-// (после логина) через FAR.WM.registerConsoleApp() — только
-// если сервер вернул console:true в /api/info.
-// ============================================================
 
 FAR.WM = FAR.WM || {};
 
@@ -22,7 +8,7 @@ FAR._consoleXtermLoaded = false;
 FAR._xtermLoadingPromise = null;
 
 FAR._loadXterm = function() {
-    if (window.Terminal) return Promise.resolve();
+    if (window.Terminal && window.FitAddon) return Promise.resolve();
     if (FAR._consoleXtermLoaded) return Promise.resolve();
     if (FAR._xtermLoadingPromise) return FAR._xtermLoadingPromise;
 
@@ -36,41 +22,40 @@ FAR._loadXterm = function() {
             document.head.appendChild(link);
         }
 
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js';
+        const loadScript = (src) => {
+            return new Promise((res, rej) => {
+                const s = document.createElement('script');
+                s.src = src;
 
-        // Временно прячем module/exports, чтобы UMD-обёртка xterm.js
-        // выбрала ветку globalThis и создала window.Terminal
-        const savedExports = window.exports;
-        const savedModule = window.module;
-        try {
-            window.exports = undefined;
-            window.module = undefined;
-        } catch(e) {}
+                // Временно прячем module/exports для UMD
+                const savedExports = window.exports;
+                const savedModule = window.module;
+                try { window.exports = undefined; window.module = undefined; } catch(e) {}
 
-        script.onload = function() {
-            try {
-                window.exports = savedExports;
-                window.module = savedModule;
-            } catch(e) {}
+                s.onload = () => {
+                    try { window.exports = savedExports; window.module = savedModule; } catch(e) {}
+                    res();
+                };
+                s.onerror = () => {
+                    try { window.exports = savedExports; window.module = savedModule; } catch(e) {}
+                    rej(new Error('Ошибка загрузки ' + src));
+                };
+                document.head.appendChild(s);
+            });
+        };
 
-            if (window.Terminal) {
+        // Загружаем СТРОГО ПОСЛЕДОВАТЕЛЬНО: сначала xterm.js, затем плагин.
+        loadScript('https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js')
+            .then(() => {
+                if (!window.Terminal) throw new Error('xterm.js загружен, но window.Terminal не создан');
+                return loadScript('https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js');
+            })
+            .then(() => {
+                if (!window.FitAddon) throw new Error('xterm-addon-fit.js загружен, но window.FitAddon не создан');
                 FAR._consoleXtermLoaded = true;
                 resolve();
-            } else {
-                reject(new Error('xterm.js загружен, но window.Terminal не создан'));
-            }
-        };
-
-        script.onerror = function() {
-            try {
-                window.exports = savedExports;
-                window.module = savedModule;
-            } catch(e) {}
-            reject(new Error('Не удалось загрузить xterm.js'));
-        };
-
-        document.head.appendChild(script);
+            })
+            .catch(reject);
     });
 
     return FAR._xtermLoadingPromise;
@@ -143,6 +128,7 @@ FAR._createConsole = function (hostEl, opts) {
 
     const S = { es: null, connected: false, destroyed: false };
     let term = null;
+    let fitAddon = null;
 
     function setStatus(text, cls) {
         elStatusTxt.textContent = text || '';
@@ -168,8 +154,18 @@ FAR._createConsole = function (hostEl, opts) {
                 selectionBackground: '#45475a'
             }
         });
+
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
         term.open(elTermHost);
-        term.focus();
+
+        // Даем DOM время отрисоваться и высчитываем точный размер
+        setTimeout(() => {
+            fitAddon.fit();
+            term.focus();
+            connect();
+        }, 100);
 
         const ctx = FAR.side && FAR.side[FAR.activePanel];
         const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
@@ -190,7 +186,7 @@ FAR._createConsole = function (hostEl, opts) {
             } catch (e) {}
         });
 
-        // Изменение размера окна
+        // Отправляем размер при каждом изменении окна
         term.onResize(async (size) => {
             try {
                 await fetch(baseUrl + '/api/console/resize', {
@@ -203,8 +199,6 @@ FAR._createConsole = function (hostEl, opts) {
                 });
             } catch (e) {}
         });
-
-        connect();
     }
 
     function connect() {
@@ -306,29 +300,15 @@ FAR.initConsole = function () {
         const modal = document.getElementById('consoleModal');
         if (!modal || modal.classList.contains('hidden')) return;
         const t = e.target;
-        // Не перехватываем Escape, если пользователь вводит текст в терминале
         if (t && t.classList.contains('xterm-helper-textarea')) return;
         FAR.closeConsole();
     }, true);
 };
 
-// ============================================================
-// Динамическая регистрация в WM (после логина)
-// ============================================================
-//
-// Вызывается из 05-connection.js в FAR.connectToDb(), когда
-// сервер вернул console:true в /api/info.
-// Без этой функции приложение Console НЕ появится в меню
-// Пуск и на рабочем столе WM.
-// ============================================================
-
 FAR.WM.registerConsoleApp = function () {
-    if (FAR.WM.getApp && FAR.WM.getApp('console')) return;   // уже есть
+    if (FAR.WM.getApp && FAR.WM.getApp('console')) return;
 
-    if (typeof FAR.WM.registerApp !== 'function') {
-        console.warn('[console] FAR.WM.registerApp ещё не готов');
-        return;
-    }
+    if (typeof FAR.WM.registerApp !== 'function') return;
 
     FAR.WM.registerApp({
         id: 'console',
@@ -354,7 +334,6 @@ FAR.WM.unregisterConsoleApp = function () {
     if (FAR.WM._apps && FAR.WM._apps['console']) {
         delete FAR.WM._apps['console'];
     }
-    // На случай, если окно уже открыто — закрываем
     if (FAR.WM.state && FAR.WM.state.windows) {
         FAR.WM.state.windows
             .filter(w => w.appId === 'console')
