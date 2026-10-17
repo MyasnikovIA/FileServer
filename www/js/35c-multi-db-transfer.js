@@ -3,17 +3,13 @@
 // Универсальный transferBetweenSides('copy' | 'move').
 // ============================================================
 //
-// Модуль подключается ПОСЛЕ 35a и 35b, т.к. использует:
-//   - FAR.side[side] (35a)
-//   - FAR.readFileBodyFromSide (35b)
-//   - FAR.listRecursiveFromSide (06-files.js)
-//
-// ВАЖНО (ленивая загрузка):
-//   Раньше для обхода вложенных папок использовался
-//   srcSelected.fileIndex — глобальный индекс, загруженный
-//   целиком. Теперь fileIndex содержит только текущую
-//   директорию, поэтому обход делается через рекурсивный
-//   запрос к БД: FAR.listRecursiveFromSide(src, folderPath).
+// ВАЖНО:
+//   • Файлы записываются ОДНИМ запросом PUT /api/write
+//     (FsClient.putAttachment). Раньше было два шага:
+//     put(пустой_doc) + putAttachment, из-за чего при 507
+//     (превышение квоты) на диске оставался пустой файл.
+//   • Файловая система работает через атомарную запись:
+//     либо файл создан полностью, либо не создан вовсе.
 
 FAR.transferBetweenSides = async function (mode) {
     const src = FAR.activePanel;
@@ -95,7 +91,7 @@ FAR.transferBetweenSides = async function (mode) {
     FAR.startProgress(
         mode === 'move' ? '✂️' : '📋',
         actionLabel + ': ' + selected.length + ' элем. → ' +
-            (dst === 'left' ? 'левая' : 'правая') + ' (' + sDst.conn.db + ')',
+        (dst === 'left' ? 'левая' : 'правая') + ' (' + sDst.conn.db + ')',
         totalSteps,
         function () {}
     );
@@ -143,7 +139,13 @@ FAR.transferBetweenSides = async function (mode) {
     }
 
     // ============================================================
-    // 3. Копируем файлы
+    // 3. Копируем файлы.
+    //
+    // АТОМАРНО: один PUT /api/write с содержимым файла.
+    // Если запись не удалась (например, 507 quota) — файла на
+    // диске не будет вообще. Раньше делалось два шага
+    // (put пустого + putAttachment), из-за чего при 507
+    // оставался пустой файл размером 0 байт.
     // ============================================================
     for (let i = 0; i < fileTasks.length; i++) {
         if (FAR.progress.cancelled) break;
@@ -155,22 +157,11 @@ FAR.transferBetweenSides = async function (mode) {
         try {
             const res = await FAR.readFileBodyFromSide(src, t.srcItem);
             const blob = new Blob([res.data], { type: res.contentType });
-
             const newId = 'f:' + encodeURIComponent(t.dstPath);
 
-            try { const ex = await sDst.db.get(newId); await sDst.db.remove(ex); }
-            catch (e) { if (e.status !== 404) throw e; }
-
-            const doc = {
-                _id: newId, type: 'file', path: t.dstPath,
-                name: t.dstPath.split('/').pop(),
-                size: res.data.length, mtime: Date.now(),
-                binary: t.srcItem.binary || false,
-                contentType: res.contentType || 'application/octet-stream'
-            };
-            await sDst.db.put(doc);
-            const fresh = await sDst.db.get(newId);
-            await sDst.db.putAttachment(newId, 'b', fresh._rev, blob,
+            // Один запрос — запись всего содержимого файла.
+            // Существующий файл будет перезаписан.
+            await sDst.db.putAttachment(newId, 'b', null, blob,
                 res.contentType || 'application/octet-stream');
 
             if (mode === 'move') {

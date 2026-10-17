@@ -1,9 +1,16 @@
 // ============================================================
-// Drag&drop файлов/папок из Проводника в панель.
+// Drag&drop файлов/папок из Проводника ОС в панель +
+// drag&drop файлов МЕЖДУ панелями (panel-to-panel).
 // ============================================================
 //
-// ЛЕНИВАЯ ЗАГРУЗКА: после загрузки панель перечитывает свою
-// директорию через FAR.reloadPanel.
+// Два независимых механизма:
+//
+//   A) OS → panel: HTML5 drag events (dataTransfer.types содержат 'Files').
+//      Обработчик — setupPanelDragDrop(panelId), существовал раньше.
+//
+//   B) panel → panel: мышь (mousedown/mousemove/mouseup) с порогом 5px.
+//      Обработчик — _setupPanelItemDrag(panelId), НОВОЕ.
+//      По Shift+drop — перенос (move); без Shift — копирование (copy).
 
 FAR._dragCounter = 0;
 
@@ -76,6 +83,9 @@ FAR.setupPanelDragDrop = function(panelId) {
         FAR.setActivePanel(panelId === 'panelLeft' ? 'left' : 'right');
         await FAR.uploadFilesToPath(files, targetPath);
     });
+
+    // Внутренний drag&drop между панелями
+    FAR._setupPanelItemDrag(panelId);
 };
 
 FAR.collectFilesFromDataTransfer = async function(dataTransfer) {
@@ -154,4 +164,204 @@ FAR.traverseEntry = function(entry, relativePath, result) {
             resolve();
         }
     });
+};
+
+// ============================================================
+// Внутренний drag&drop между панелями (panel → panel)
+// ============================================================
+
+FAR._panelDragState = null;
+
+FAR._setupPanelItemDrag = function (panelId) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    if (panel._farItemDragBound) return;
+    panel._farItemDragBound = true;
+
+    const side = panelId === 'panelLeft' ? 'left' : 'right';
+
+    panel.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        if (!FAR.db) return;
+        if (e.ctrlKey || e.metaKey) return;   // Ctrl — оставляем для выделения
+
+        const itemEl = e.target.closest('.file-item');
+        if (!itemEl) return;
+
+        const idx = parseInt(itemEl.getAttribute('data-index'), 10);
+        if (isNaN(idx) || idx === -1) return;
+
+        const ctx = FAR.side[side];
+        if (!ctx) return;
+        if (!ctx.selectedIdx.has(idx)) return;   // тащим только уже выделенное
+
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let dragging = false;
+
+        const onMove = function (ev) {
+            const dx = ev.clientX - startX;
+            const dy = ev.clientY - startY;
+            if (!dragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+                dragging = true;
+                FAR._beginPanelDrag(side, ev.clientX, ev.clientY);
+            }
+            if (dragging) {
+                FAR._updatePanelDrag(ev.clientX, ev.clientY);
+                FAR._highlightPanelUnderCursor(ev.clientX, ev.clientY, side);
+            }
+        };
+
+        const onUp = function (ev) {
+            document.removeEventListener('mousemove', onMove, true);
+            document.removeEventListener('mouseup', onUp, true);
+
+            if (dragging) {
+                const targetPanel = FAR._getPanelUnderCursor(ev.clientX, ev.clientY);
+                if (targetPanel && targetPanel !== panelId) {
+                    const targetSide = targetPanel === 'panelLeft' ? 'left' : 'right';
+                    const mode = ev.shiftKey ? 'move' : 'copy';
+                    FAR._performPanelDrop(targetSide, mode);
+                } else {
+                    FAR._endPanelDrag();
+                }
+            }
+        };
+
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+    });
+};
+
+FAR._beginPanelDrag = function (sourceSide, x, y) {
+    const ctx = FAR.side[sourceSide];
+    if (!ctx || ctx.selectedIdx.size === 0) return;
+
+    const files = ctx.files || [];
+    const items = [];
+    for (const i of Array.from(ctx.selectedIdx)) {
+        const f = files[i];
+        if (f) items.push({
+            _id: f._id, name: f.name, path: f.path, isFolder: f.isFolder
+        });
+    }
+    if (items.length === 0) return;
+
+    const ghost = document.createElement('div');
+    ghost.className = 'panel-drag-ghost';
+    ghost.textContent = items.length === 1
+        ? '📦 ' + items[0].name
+        : '📦 ' + items.length + ' элементов';
+    ghost.style.cssText =
+        'position:fixed;pointer-events:none;z-index:99999;' +
+        'background:rgba(74,163,255,0.92);color:#fff;' +
+        'padding:6px 12px;border-radius:5px;font-size:12px;' +
+        'box-shadow:0 4px 12px rgba(0,0,0,0.5);' +
+        'white-space:nowrap;';
+    ghost.style.left = x + 'px';
+    ghost.style.top  = y + 'px';
+    document.body.appendChild(ghost);
+
+    FAR._panelDragState = {
+        sourceSide: sourceSide,
+        items: items,
+        ghost: ghost
+    };
+
+    FAR.setStatus('Перетаскивание: ' + items.length +
+        ' элемент(ов). Отпустите на другой панели (Shift — перенос).');
+};
+
+FAR._updatePanelDrag = function (x, y) {
+    if (!FAR._panelDragState || !FAR._panelDragState.ghost) return;
+    FAR._panelDragState.ghost.style.left = x + 'px';
+    FAR._panelDragState.ghost.style.top  = y + 'px';
+};
+
+FAR._endPanelDrag = function () {
+    if (FAR._panelDragState && FAR._panelDragState.ghost) {
+        try { FAR._panelDragState.ghost.remove(); } catch (e) {}
+    }
+    FAR._panelDragState = null;
+    FAR.setStatus('');
+
+    document.querySelectorAll('.panel.item-drag-over').forEach(function (el) {
+        el.classList.remove('item-drag-over');
+    });
+};
+
+FAR._getPanelUnderCursor = function (x, y) {
+    const panels = ['panelLeft', 'panelRight'];
+    for (const pid of panels) {
+        const el = document.getElementById(pid);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right &&
+            y >= rect.top && y <= rect.bottom) {
+            return pid;
+        }
+    }
+    return null;
+};
+
+FAR._highlightPanelUnderCursor = function (x, y, sourceSide) {
+    const target = FAR._getPanelUnderCursor(x, y);
+    document.querySelectorAll('.panel.item-drag-over').forEach(function (el) {
+        el.classList.remove('item-drag-over');
+    });
+    if (!target) return;
+    const targetSide = target === 'panelLeft' ? 'left' : 'right';
+    if (targetSide === sourceSide) return;
+    const el = document.getElementById(target);
+    if (el) el.classList.add('item-drag-over');
+};
+
+FAR._performPanelDrop = async function (targetSide, mode) {
+    const state = FAR._panelDragState;
+    FAR._endPanelDrag();
+    if (!state) return;
+
+    const srcSide = state.sourceSide;
+    if (srcSide === targetSide) {
+        FAR.toast('Перетащите в другую панель', 'info');
+        return;
+    }
+
+    const sSrc = FAR.side[srcSide];
+    const sDst = FAR.side[targetSide];
+    if (!sSrc || !sSrc.db) { FAR.toast('Источник не подключён', 'warning'); return; }
+    if (!sDst || !sDst.db) { FAR.toast('Цель не подключена', 'warning'); return; }
+
+    // Найти индексы выделения по _id
+    const files = sSrc.files || [];
+    const wantedIds = new Set(state.items.map(function (it) { return it._id; }));
+    const indices = [];
+    files.forEach(function (f, idx) {
+        if (f && wantedIds.has(f._id)) indices.push(idx);
+    });
+    if (indices.length === 0) {
+        FAR.toast('Файлы не найдены в текущей папке источника', 'warning');
+        return;
+    }
+
+    const prevActive = FAR.activePanel;
+    const prevSel = Array.from(sSrc.selectedIdx);
+    const prevAnchor = sSrc.anchor;
+
+    FAR.activePanel = srcSide;
+    sSrc.selectedIdx.clear();
+    indices.forEach(function (i) { sSrc.selectedIdx.add(i); });
+    sSrc.anchor = indices[0];
+
+    try {
+        await FAR.transferBetweenSides(mode || 'copy');
+    } catch (e) {
+        console.error('[panel drop] transfer failed:', e);
+        FAR.toast('Ошибка переноса: ' + e.message, 'error');
+    } finally {
+        FAR.activePanel = prevActive;
+        sSrc.selectedIdx.clear();
+        prevSel.forEach(function (i) { sSrc.selectedIdx.add(i); });
+        sSrc.anchor = prevAnchor;
+    }
 };

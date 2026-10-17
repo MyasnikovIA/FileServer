@@ -1,15 +1,22 @@
 .progress-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
-    z-index: 1800; display: flex; align-items: center; justify-content: center;
+    position: fixed; inset: 0;
+    background: transparent;
+    z-index: 7000;
+    display: flex; align-items: center; justify-content: center;
     padding: 20px;
+    pointer-events: none;
 }
 .progress-overlay.hidden { display: none; }
+
 .progress-content {
+    pointer-events: auto;
     background: #1e1e2e; border-radius: 12px;
     max-width: 640px; width: 100%; max-height: 80vh;
     display: flex; flex-direction: column;
-    border: 1px solid #45475a; box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+    border: 1px solid #45475a;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(137,180,250,0.15);
 }
+
 .progress-header {
     padding: 14px 20px; border-bottom: 1px solid #45475a;
     display: flex; justify-content: space-between; align-items: center;
@@ -79,11 +86,12 @@
 .progress-footer .btn-close { background: #89b4fa; color: #1e1e2e; }
 .progress-footer .btn-close:hover { background: #74c7ec; }
 .progress-footer button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .progress-mini {
     position: fixed; bottom: 20px; right: 20px;
     background: #1e1e2e; border: 1px solid #89b4fa;
     border-radius: 10px; padding: 10px 14px;
-    min-width: 260px; max-width: 360px; z-index: 1900;
+    min-width: 260px; max-width: 360px; z-index: 7100;
     box-shadow: 0 6px 25px rgba(0,0,0,0.6);
     cursor: pointer; transition: transform 0.2s;
 }

@@ -7,6 +7,7 @@ FAR.updateAuthUI = function() {
         btn.textContent = '🔐 LogIn';
         btn.title = 'Войти в базу данных';
     }
+
     const ids = ['btnUpload','btnMkdir','btnCopy','btnMove','btnDownload',
         'btnZip','btnDelete','btnRefresh','btnDebug','btnMigrate'];
     for (const id of ids) {
@@ -19,8 +20,16 @@ FAR.updateAuthUI = function() {
             if (!FAR.db) el.disabled = true;
         }
     }
+
+    // ---- Кнопка «Консоль» видна только пользователям с console:true ----
+    const btnConsole = document.getElementById('btnConsole');
+    if (btnConsole) {
+        btnConsole.style.display = FAR.consoleEnabled ? '' : 'none';
+    }
+
     if (FAR.db) FAR.updateButtons();
 };
+
 FAR.onAuthButton = function () {
     if (FAR.db) {
         if (!confirm('Выйти из системы?\nСохранённые данные подключения будут удалены.')) return;

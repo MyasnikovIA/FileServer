@@ -18,6 +18,7 @@
 // ------------------------------------------------------------
 // Публичный вход
 // ------------------------------------------------------------
+FAR.WM = FAR.WM || {};
 
 FAR.openConsole = function (opts) {
     opts = opts || {};
@@ -357,6 +358,13 @@ FAR.initConsole = function () {
 
 FAR.WM.registerConsoleApp = function () {
     if (FAR.WM.getApp && FAR.WM.getApp('console')) return;   // уже есть
+
+    // На момент ВЫЗОВА (после логина) все модули уже загружены —
+    // FAR.WM.registerApp и FAR.WM.getApp гарантированно доступны.
+    if (typeof FAR.WM.registerApp !== 'function') {
+        console.warn('[console] FAR.WM.registerApp ещё не готов');
+        return;
+    }
 
     FAR.WM.registerApp({
         id: 'console',

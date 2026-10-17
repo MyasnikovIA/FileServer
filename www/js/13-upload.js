@@ -5,6 +5,12 @@
 // ЛЕНИВАЯ ЗАГРУЗКА: после операции перечитываем директорию
 // через FAR.reloadPanel(side), а не перерисовываем из
 // глобального fileIndex.
+//
+// ВАЖНО: файлы записываются ОДНИМ запросом PUT /api/write
+// (FsClient.putAttachment). Раньше делалось два запроса:
+// put(пустой_doc) + putAttachment. Из-за этого при превышении
+// квоты (507) на диске оставался пустой файл. Теперь либо
+// файл создан полностью, либо не создан вовсе.
 
 FAR.uploadFilesToPath = async function(files, targetPath) {
     if (!FAR.ensureDb()) return { ok: 0, err: 0 };
@@ -17,6 +23,7 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
     const baseTarget = FAR.normPath(targetPath);
     const targetName = baseTarget === '' ? 'корень' : baseTarget;
 
+    // Собираем список папок, которые нужно создать
     const foldersToCreate = new Set();
     for (const f of files) {
         const rel = FAR.normPath(f.relativePath || '');
@@ -37,6 +44,9 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
 
     let ok = 0, err = 0, step = 0;
 
+    // ============================================================
+    // 1. Создание папок (сначала родительские — сортировка по длине пути)
+    // ============================================================
     const sortedFolders = Array.from(foldersToCreate).sort((a, b) => a.length - b.length);
     for (const relFolder of sortedFolders) {
         if (FAR.progress.cancelled) break;
@@ -60,6 +70,15 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
         }
     }
 
+    // ============================================================
+    // 2. Загрузка файлов.
+    //
+    // Файл записывается ОДНИМ запросом через putAttachment.
+    // Это гарантирует атомарность:
+    //   • если PUT /api/write прошёл — на диске полный файл;
+    //   • если нет (например, 507 quota) — файла нет вообще;
+    //     пустых "заглушек" на диске не остаётся.
+    // ============================================================
     for (let i = 0; i < files.length; i++) {
         if (FAR.progress.cancelled) break;
         const f = files[i]; step++;
@@ -73,24 +92,11 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
         FAR.progressLog(`↑ ${cleanPath} (${FAR.formatSize(f.blob.size)})`, 'info');
 
         try {
-            const arrayBuffer = await f.blob.arrayBuffer();
-            const data = new Uint8Array(arrayBuffer);
             const contentType = f.contentType || f.blob.type || 'application/octet-stream';
             const docId = 'f:' + encodeURIComponent(cleanPath);
 
-            let rev = null;
-            try { const existing = await ctx.db.get(docId); rev = existing._rev; }
-            catch (e) { if (e.status !== 404) throw e; }
-
-            const doc = {
-                _id: docId, type: 'file', path: cleanPath, name: f.name,
-                size: data.length, mtime: Date.now(),
-                binary: !contentType.startsWith('text'), contentType
-            };
-            if (rev) doc._rev = rev;
-            await ctx.db.put(doc);
-            const fresh = await ctx.db.get(docId);
-            await ctx.db.putAttachment(docId, 'b', fresh._rev, f.blob, contentType);
+            // Один запрос — запись всего файла.
+            await ctx.db.putAttachment(docId, 'b', null, f.blob, contentType);
 
             ok++;
             FAR.progressLog(`✅ ${cleanPath}`, 'ok');
