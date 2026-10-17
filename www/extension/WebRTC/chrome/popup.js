@@ -1,8 +1,9 @@
 const $ = id => document.getElementById(id);
 
 (async () => {
-  const cfg = await chrome.storage.local.get(['room', 'server']);
+  const cfg = await chrome.storage.local.get(['room', 'server', 'source']);
   $('room').value = cfg.room || 'main';
+  $('source').value = cfg.source || 'camera';
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   let defaultHost = 'localhost';
@@ -16,13 +17,14 @@ const $ = id => document.getElementById(id);
 $('start').onclick = async () => {
   const room = $('room').value.trim() || 'main';
   const host = $('server').value.trim() || 'localhost';
+  const source = $('source').value;
 
-  await chrome.storage.local.set({ room, server: host });
+  await chrome.storage.local.set({ room, server: host, source });
   $('status').textContent = 'starting…';
 
   try {
     const resp = await chrome.runtime.sendMessage({
-      type: 'start', room, host
+      type: 'start', room, host, source
     });
     if (resp && resp.ok) window.close();
     else $('status').textContent = 'error: ' + (resp && resp.error);

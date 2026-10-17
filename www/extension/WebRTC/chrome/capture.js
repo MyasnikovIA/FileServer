@@ -1,18 +1,25 @@
-// capture.js — WebRTC-публикатор.
-// Сигналинг: WS ws://<host>:8081/ws/publish?room=<room>
-// Для каждого зрителя создаётся отдельный RTCPeerConnection.
+// ============================================================
+// capture.js — WebRTC-публикатор (камера или экран)
+// ============================================================
 
 const params = new URLSearchParams(location.search);
 const room = params.get('room') || 'main';
 const host = params.get('host') || 'localhost';
+const source = params.get('source') || 'camera'; // 'camera' или 'screen'
 
 const statusEl  = document.getElementById('status');
 const viewersEl = document.getElementById('viewers');
 const preview   = document.getElementById('preview');
 const stopBtn   = document.getElementById('stop');
 
-const setStatus = s => { console.log('[capture]', s); statusEl.textContent = s; };
-const setViewers = n => { viewersEl.textContent = n ? `Зрителей: ${n}` : ''; };
+const setStatus = s => {
+    console.log('[capture]', s);
+    statusEl.textContent = s;
+};
+
+const setViewers = n => {
+    viewersEl.textContent = n ? `Зрителей: ${n}` : '';
+};
 
 // Должен совпадать с videochat.port в config.json
 const WS_PORT = 8081;
@@ -25,12 +32,42 @@ let stream = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
-        setStatus('Запрос доступа к камере...');
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
-            audio: { echoCancellation: true, noiseSuppression: true }
-        });
+        if (source === 'screen') {
+            setStatus('Запрос доступа к экрану...');
+            // Запрашиваем захват экрана (пользователь выберет весь экран, окно или вкладку)
+            stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    cursor: "always"
+                },
+                audio: true // Браузер предложит транслировать звук вкладки/системы (если поддерживается)
+            });
+        } else {
+            setStatus('Запрос доступа к камере...');
+            // Запрашиваем веб-камеру
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 30 }
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true
+                }
+            });
+        }
+
         preview.srcObject = stream;
+
+        // Если пользователь остановил трансляцию через всплывающую панель браузера
+        // (обычно внизу экрана при шаринге), срабатывает onended
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.onended = () => {
+                setStatus('Трансляция остановлена пользователем');
+                stop();
+            };
+        }
 
         const wsUrl = `ws://${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
         setStatus(`Подключение к ${wsUrl}...`);
@@ -62,7 +99,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (msg.viewerId && msg.sdp && msg.sdp.type === 'answer') {
                 const pc = peers.get(msg.viewerId);
                 if (pc) {
-                    pc.setRemoteDescription(msg.sdp)
+                    pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
                         .catch(err => console.warn('[capture] answer error:', err));
                 }
                 return;
@@ -72,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (msg.viewerId && msg.candidate) {
                 const pc = peers.get(msg.viewerId);
                 if (pc) {
-                    pc.addIceCandidate(msg.candidate)
+                    pc.addIceCandidate(new RTCIceCandidate(msg.candidate))
                         .catch(err => console.warn('[capture] candidate error:', err));
                 }
                 return;
@@ -90,7 +127,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
     } catch (err) {
-        setStatus('Ошибка камеры: ' + err.message);
+        setStatus('Ошибка захвата: ' + err.message);
+        console.error('[capture]', err);
     }
 });
 
