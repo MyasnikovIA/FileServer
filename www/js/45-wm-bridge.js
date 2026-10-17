@@ -1014,9 +1014,7 @@ FAR.WM._mountMp3Viewer = async function (win, props) {
     }
 };
 
-// ---- Видео ----
-
-// ---- Видео (WM-окно, прямой URL + Range) ----
+// ---- Видео (WM-окно, прямой URL + Range, растяжение на всю площадь) ----
 
 FAR.WM._mountVideoViewer = async function (win, props) {
     const item = props.file;
@@ -1024,9 +1022,16 @@ FAR.WM._mountVideoViewer = async function (win, props) {
 
     win.el.querySelector('.wm-title-text').textContent = '🎬 ' + item.name;
 
+    // ============================================================
+    // Контейнер stage получает position:relative + align-items:stretch,
+    // чтобы <video> мог занять его целиком (без центрирования).
+    // Сам <video> растягивается через width/height: 100% +
+    // object-fit: contain (см. inline-стиль ниже).
+    // ============================================================
     win.bodyEl.innerHTML =
         '<div style="height:100%;background:#000;display:flex;flex-direction:column;">' +
-        '<div data-role="stage" style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0;"></div>' +
+        '<div data-role="stage" style="flex:1;display:flex;align-items:stretch;justify-content:stretch;min-height:0;position:relative;background:#000;">' +
+        '</div>' +
         '<div data-role="status" style="padding:6px 12px;background:#111;color:#a6adc8;font-size:11px;text-align:center;">Загрузка…</div>' +
         '</div>';
 
@@ -1034,9 +1039,9 @@ FAR.WM._mountVideoViewer = async function (win, props) {
     const statusEl = win.bodyEl.querySelector('[data-role="status"]');
 
     // ============================================================
-    // Прямой URL + Range. Как и в панельном режиме, файл НЕ
-    // качается в память — браузер сам делает запросы по
-    // диапазонам и буферизует по мере воспроизведения.
+    // Прямой URL + Range. Файл НЕ качается в память — браузер сам
+    // делает запросы по диапазонам и буферизует по мере
+    // воспроизведения.
     // ============================================================
     const directUrl = FAR.buildDirectFileUrl(item, side);
     if (!directUrl) {
@@ -1064,7 +1069,24 @@ FAR.WM._mountVideoViewer = async function (win, props) {
     video.playsInline = true;
     if (isCrossOrigin) video.crossOrigin = 'anonymous';
     video.src = url;
-    video.style.cssText = 'max-width:100%;max-height:100%;';
+
+    // ============================================================
+    // КЛЮЧЕВОЕ ДЛЯ РАСТЯЖЕНИЯ:
+    //   width:100% + height:100% — растягиваем на весь контейнер;
+    //   object-fit: contain       — сохраняем пропорции, пустые
+    //                               поля заполняются чёрным фоном.
+    //
+    // Если нужно заполнить без чёрных полос (с обрезкой краёв),
+    // замените 'contain' на 'cover'.
+    // ============================================================
+    video.style.cssText =
+        'width:100%;' +
+        'height:100%;' +
+        'object-fit:contain;' +
+        'display:block;' +
+        'background:#000;' +
+        'outline:none;';
+
     stage.appendChild(video);
 
     win.props._videoEl = video;
