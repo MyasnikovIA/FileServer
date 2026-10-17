@@ -17,7 +17,6 @@ import com.sun.net.httpserver.HttpHandler;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.RandomAccessFile;
 import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,33 +45,20 @@ public class StaticHandler implements HttpHandler {
     // Определение Content-Type
     // ============================================================
 
-    /**
-     * Определяет MIME-тип для файла.
-     *
-     * Порядок:
-     *   1. Таблица по расширению (детерминировано, не зависит от ОС).
-     *   2. Files.probeContentType (системный детектор, если расширение
-     *      неизвестно). Полезно для специфичных форматов.
-     *   3. application/octet-stream.
-     */
     public static String detectContentType(Path file) {
         if (file == null) return "application/octet-stream";
 
         String name = file.getFileName().toString();
 
-        // 1. По расширению
         String byExt = guessMime(name);
         if (!"application/octet-stream".equals(byExt)) {
             return byExt;
         }
 
-        // 1a. ROM-расширения НЕ должны попадать в probeContentType,
-        //     потому что Windows registry может вернуть мусор.
         if (isRomExtension(name)) {
             return "application/octet-stream";
         }
 
-        // 2. Системный детектор — только для того, что не опознали по расширению
         try {
             String ct = Files.probeContentType(file);
             if (ct != null && !ct.isEmpty() && !"content/unknown".equals(ct)) {
@@ -80,7 +66,6 @@ public class StaticHandler implements HttpHandler {
             }
         } catch (IOException ignored) { }
 
-        // 3. Ничего не знаем
         return "application/octet-stream";
     }
 
@@ -88,14 +73,11 @@ public class StaticHandler implements HttpHandler {
         String lower = name.toLowerCase(Locale.ROOT);
         String[] romExts = {
                 ".smc", ".sfc", ".fig", ".swc", ".bsx", ".gd3", ".gd7", ".dx2",
-                ".nes",
-                ".gb", ".gbc", ".gba", ".nds",
-                ".z64", ".n64", ".v64",
-                ".md", ".gen", ".smd", ".sms", ".gg", ".32x",
-                ".pce", ".ngp", ".ngc", ".ws", ".wsc",
-                ".col", ".cv", ".d64", ".a26", ".a78", ".lnx", ".j64", ".jag", ".vb", ".vboy",
-                ".bin", ".cue", ".iso", ".img", ".pbp", ".chd",
-                ".jsdos", ".dosz"
+                ".nes", ".gb", ".gbc", ".gba", ".nds", ".z64", ".n64", ".v64",
+                ".md", ".gen", ".smd", ".sms", ".gg", ".32x", ".pce", ".ngp",
+                ".ngc", ".ws", ".wsc", ".col", ".cv", ".d64", ".a26", ".a78",
+                ".lnx", ".j64", ".jag", ".vb", ".vboy", ".bin", ".cue", ".iso",
+                ".img", ".pbp", ".chd", ".jsdos", ".dosz"
         };
         for (String ext : romExts) {
             if (lower.endsWith(ext)) return true;
@@ -103,69 +85,35 @@ public class StaticHandler implements HttpHandler {
         return false;
     }
 
-    /**
-     * MIME-тип по расширению файла.
-     * Возвращает "application/octet-stream" для неизвестных расширений.
-     */
     public static String guessMime(String name) {
         if (name == null) return "application/octet-stream";
         String lower = name.toLowerCase(Locale.ROOT);
 
-        // ============================================================
-        // ROM-образы консолей — ВСЕГДА application/octet-stream.
-        //
-        // Windows registry может вернуть неожиданный MIME
-        // (text/plain, application/x-snes-rom и т.п.), который
-        // ломает EmulatorJS (Snes9x не находит ROM и показывает
-        // своё внутреннее меню). Явно перечисляем все расширения,
-        // чтобы поведение было детерминированным.
-        // ============================================================
-
-        // SNES
         if (lower.endsWith(".smc") || lower.endsWith(".sfc") || lower.endsWith(".fig")
                 || lower.endsWith(".swc") || lower.endsWith(".bsx") || lower.endsWith(".gd3")
                 || lower.endsWith(".gd7") || lower.endsWith(".dx2"))   return "application/octet-stream";
-
-        // NES
         if (lower.endsWith(".nes"))                                return "application/octet-stream";
-
-        // GameBoy / GBC / GBA / NDS
         if (lower.endsWith(".gb") || lower.endsWith(".gbc"))       return "application/octet-stream";
         if (lower.endsWith(".gba"))                                return "application/octet-stream";
         if (lower.endsWith(".nds"))                                return "application/octet-stream";
-
-        // N64
         if (lower.endsWith(".z64") || lower.endsWith(".n64")
                 || lower.endsWith(".v64"))                                return "application/octet-stream";
-
-        // Sega MD / Genesis / Master System / Game Gear / 32X
         if (lower.endsWith(".md")  || lower.endsWith(".gen")
                 || lower.endsWith(".smd") || lower.endsWith(".sms")
                 || lower.endsWith(".gg")  || lower.endsWith(".32x"))      return "application/octet-stream";
-
-        // PC Engine / NeoGeo Pocket / WonderSwan
         if (lower.endsWith(".pce") || lower.endsWith(".ngp")
                 || lower.endsWith(".ngc") || lower.endsWith(".ws")
                 || lower.endsWith(".wsc"))                                return "application/octet-stream";
-
-        // Coleco / Commodore / Atari / Lynx / Jaguar / Virtual Boy
         if (lower.endsWith(".col") || lower.endsWith(".cv")
                 || lower.endsWith(".d64") || lower.endsWith(".a26")
                 || lower.endsWith(".a78") || lower.endsWith(".lnx")
                 || lower.endsWith(".j64") || lower.endsWith(".jag")
                 || lower.endsWith(".vb")  || lower.endsWith(".vboy"))      return "application/octet-stream";
-
-        // PSX / generic disc images
         if (lower.endsWith(".bin") || lower.endsWith(".cue")
                 || lower.endsWith(".iso") || lower.endsWith(".img")
                 || lower.endsWith(".pbp") || lower.endsWith(".chd"))       return "application/octet-stream";
-
-        // JSDOS-архивы
         if (lower.endsWith(".jsdos") || lower.endsWith(".dosz"))    return "application/octet-stream";
 
-        // ============================================================
-        // Web
-        // ============================================================
         if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html; charset=utf-8";
         if (lower.endsWith(".js")   || lower.endsWith(".mjs")) return "application/javascript; charset=utf-8";
         if (lower.endsWith(".css"))                            return "text/css; charset=utf-8";
@@ -174,7 +122,6 @@ public class StaticHandler implements HttpHandler {
         if (lower.endsWith(".map"))                            return "application/json; charset=utf-8";
         if (lower.endsWith(".wasm"))                           return "application/wasm";
 
-        // --- Текст ---
         if (lower.endsWith(".txt"))                            return "text/plain; charset=utf-8";
         if (lower.endsWith(".md"))                             return "text/markdown; charset=utf-8";
         if (lower.endsWith(".csv"))                            return "text/csv; charset=utf-8";
@@ -182,7 +129,6 @@ public class StaticHandler implements HttpHandler {
         if (lower.endsWith(".yaml") || lower.endsWith(".yml")) return "application/x-yaml; charset=utf-8";
         if (lower.endsWith(".ini")  || lower.endsWith(".cfg")) return "text/plain; charset=utf-8";
 
-        // --- Изображения ---
         if (lower.endsWith(".png"))                            return "image/png";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
         if (lower.endsWith(".gif"))                            return "image/gif";
@@ -193,7 +139,6 @@ public class StaticHandler implements HttpHandler {
         if (lower.endsWith(".tif") || lower.endsWith(".tiff")) return "image/tiff";
         if (lower.endsWith(".avif"))                           return "image/avif";
 
-        // --- Аудио ---
         if (lower.endsWith(".mp3"))                            return "audio/mpeg";
         if (lower.endsWith(".m4a"))                            return "audio/mp4";
         if (lower.endsWith(".aac"))                            return "audio/aac";
@@ -202,7 +147,6 @@ public class StaticHandler implements HttpHandler {
         if (lower.endsWith(".wav"))                            return "audio/wav";
         if (lower.endsWith(".flac"))                           return "audio/flac";
 
-        // --- Видео ---
         if (lower.endsWith(".mp4") || lower.endsWith(".m4v"))  return "video/mp4";
         if (lower.endsWith(".webm"))                           return "video/webm";
         if (lower.endsWith(".mkv"))                            return "video/x-matroska";
@@ -211,7 +155,6 @@ public class StaticHandler implements HttpHandler {
         if (lower.endsWith(".avi"))                            return "video/x-msvideo";
         if (lower.endsWith(".ts"))                             return "video/mp2t";
 
-        // --- Документы / архивы ---
         if (lower.endsWith(".pdf"))                            return "application/pdf";
         if (lower.endsWith(".zip"))                            return "application/zip";
         if (lower.endsWith(".rar"))                            return "application/vnd.rar";
@@ -220,7 +163,6 @@ public class StaticHandler implements HttpHandler {
         if (lower.endsWith(".gz"))                             return "application/gzip";
         if (lower.endsWith(".bz2"))                            return "application/x-bzip2";
 
-        // --- Шрифты ---
         if (lower.endsWith(".woff"))                           return "font/woff";
         if (lower.endsWith(".woff2"))                          return "font/woff2";
         if (lower.endsWith(".ttf"))                            return "font/ttf";
@@ -234,10 +176,6 @@ public class StaticHandler implements HttpHandler {
     // resolve
     // ============================================================
 
-    /**
-     * Проверяет, есть ли такой файл в webRoot.
-     * Возвращает Path или null.
-     */
     public Path tryResolve(String cleanPath) {
         if (cleanPath == null) return null;
         if (cleanPath.isEmpty()) cleanPath = "index.html";
@@ -248,12 +186,119 @@ public class StaticHandler implements HttpHandler {
         }
 
         Path target = webRoot.resolve(cleanPath).normalize();
-        if (!target.startsWith(webRoot)) return null;
-        if (!Files.isRegularFile(target)) return null;
+
+        // Отладка: если путь не совпадает, выводим куда именно смотрит сервер
+        if (!target.startsWith(webRoot)) {
+            System.out.println("[StaticHandler] Path escapes root: " + target);
+            return null;
+        }
+
+        if (!Files.isRegularFile(target)) {
+            System.out.println("[StaticHandler] File not found: " + target);
+            return null;
+        }
+
         return target;
     }
 
+    // ============================================================
+    // serve
+    // ============================================================
 
+    public static void serveFileWithRange(HttpExchange ex, Path file, String contentType)
+            throws IOException {
+
+        String method = ex.getRequestMethod().toUpperCase();
+        boolean isHead = "HEAD".equals(method);
+        if (!isHead && !"GET".equals(method)) {
+            FileServer.sendError(ex, 405, "Method not allowed");
+            return;
+        }
+
+        long size = Files.size(file);
+
+        FileServer.handleCors(ex);
+        ex.getResponseHeaders().set("Content-Type", contentType);
+        ex.getResponseHeaders().set("Accept-Ranges", "bytes");
+        ex.getResponseHeaders().set("Cache-Control", "no-cache");
+        ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+
+        String rangeHeader = ex.getRequestHeaders().getFirst("Range");
+        long start = 0, end = size - 1;
+        boolean partial = false;
+
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            String range = rangeHeader.substring(6).trim();
+            int comma = range.indexOf(',');
+            if (comma > 0) range = range.substring(0, comma);
+
+            int dash = range.indexOf('-');
+            if (dash >= 0) {
+                String startStr = range.substring(0, dash).trim();
+                String endStr   = range.substring(dash + 1).trim();
+                try {
+                    if (startStr.isEmpty() && !endStr.isEmpty()) {
+                        long suffix = Long.parseLong(endStr);
+                        start = Math.max(0, size - suffix);
+                        end = size - 1;
+                        partial = true;
+                    } else if (!startStr.isEmpty() && endStr.isEmpty()) {
+                        start = Long.parseLong(startStr);
+                        end = size - 1;
+                        partial = true;
+                    } else if (!startStr.isEmpty() && !endStr.isEmpty()) {
+                        start = Long.parseLong(startStr);
+                        end = Math.min(Long.parseLong(endStr), size - 1);
+                        partial = true;
+                    }
+                } catch (NumberFormatException e) {
+                    partial = false;
+                }
+            }
+        }
+
+        if (partial && (start > end || start >= size)) {
+            ex.getResponseHeaders().set("Content-Range", "bytes */" + size);
+            ex.sendResponseHeaders(416, -1);
+            ex.close();
+            return;
+        }
+
+        long contentLength = partial ? (end - start + 1) : size;
+        int status = partial ? 206 : 200;
+
+        if (partial) {
+            ex.getResponseHeaders().set("Content-Range",
+                    "bytes " + start + "-" + end + "/" + size);
+        }
+
+        if (isHead) {
+            ex.getResponseHeaders().set("Content-Length", String.valueOf(contentLength));
+            ex.sendResponseHeaders(status, -1);
+            ex.close();
+            return;
+        }
+
+        ex.sendResponseHeaders(status, contentLength);
+
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file.toFile(), "r");
+             OutputStream os = ex.getResponseBody()) {
+            raf.seek(start);
+            byte[] buf = new byte[16384];
+            long remaining = contentLength;
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buf.length, remaining);
+                int n = raf.read(buf, 0, toRead);
+                if (n <= 0) break;
+                os.write(buf, 0, n);
+                remaining -= n;
+            }
+        }
+    }
+
+    public void serveFile(HttpExchange ex, Path file) throws IOException {
+        serveFileWithRange(ex, file, detectContentType(file));
+    }
 
     // ============================================================
     // full handler
@@ -281,123 +326,5 @@ public class StaticHandler implements HttpHandler {
             return;
         }
         serveFile(ex, file);
-    }
-    // ============================================================
-    // serve with HTTP Range support
-    // ============================================================
-    //
-    // Поддерживает:
-    //   • GET  /  HEAD
-    //   • Range: bytes=start-end
-    //   • Range: bytes=start-       (от start до конца)
-    //   • Range: bytes=-suffix      (последние suffix байт)
-    //   • 206 Partial Content + Content-Range
-    //   • 416 Range Not Satisfiable
-    //   • Accept-Ranges: bytes
-    //
-    // Без Range возвращает 200 с полным телом (как раньше).
-    // Именно это позволяет <video> в браузере буферизовать
-    // файл лениво и перематывать без скачивания целиком.
-
-    public static void serveFileWithRange(HttpExchange ex, Path file, String contentType)
-            throws IOException {
-
-        String method = ex.getRequestMethod().toUpperCase();
-        boolean isHead = "HEAD".equals(method);
-        if (!isHead && !"GET".equals(method)) {
-            FileServer.sendError(ex, 405, "Method not allowed");
-            return;
-        }
-
-        long size = Files.size(file);
-
-        FileServer.handleCors(ex);
-        ex.getResponseHeaders().set("Content-Type", contentType);
-        ex.getResponseHeaders().set("Accept-Ranges", "bytes");
-        ex.getResponseHeaders().set("Cache-Control", "no-cache");
-        ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-
-        // ---------- Разбор Range ----------
-        String rangeHeader = ex.getRequestHeaders().getFirst("Range");
-        long start = 0, end = size - 1;
-        boolean partial = false;
-
-        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-            String range = rangeHeader.substring(6).trim();
-            int comma = range.indexOf(',');
-            if (comma > 0) range = range.substring(0, comma);   // берём только первый диапазон
-
-            int dash = range.indexOf('-');
-            if (dash >= 0) {
-                String startStr = range.substring(0, dash).trim();
-                String endStr   = range.substring(dash + 1).trim();
-                try {
-                    if (startStr.isEmpty() && !endStr.isEmpty()) {
-                        // bytes=-N — последние N байт
-                        long suffix = Long.parseLong(endStr);
-                        start = Math.max(0, size - suffix);
-                        end = size - 1;
-                        partial = true;
-                    } else if (!startStr.isEmpty() && endStr.isEmpty()) {
-                        // bytes=N- — от N до конца
-                        start = Long.parseLong(startStr);
-                        end = size - 1;
-                        partial = true;
-                    } else if (!startStr.isEmpty() && !endStr.isEmpty()) {
-                        // bytes=N-M — диапазон
-                        start = Long.parseLong(startStr);
-                        end = Math.min(Long.parseLong(endStr), size - 1);
-                        partial = true;
-                    }
-                } catch (NumberFormatException e) {
-                    partial = false;   // кривой заголовок — отдадим полный файл
-                }
-            }
-        }
-
-        // Некорректный диапазон
-        if (partial && (start > end || start >= size)) {
-            ex.getResponseHeaders().set("Content-Range", "bytes */" + size);
-            ex.sendResponseHeaders(416, -1);
-            ex.close();
-            return;
-        }
-
-        long contentLength = partial ? (end - start + 1) : size;
-        int status = partial ? 206 : 200;
-
-        if (partial) {
-            ex.getResponseHeaders().set("Content-Range",
-                    "bytes " + start + "-" + end + "/" + size);
-        }
-
-        // HEAD — заголовки как у GET, тела нет
-        if (isHead) {
-            ex.getResponseHeaders().set("Content-Length", String.valueOf(contentLength));
-            ex.sendResponseHeaders(status, -1);
-            ex.close();
-            return;
-        }
-
-        ex.sendResponseHeaders(status, contentLength);
-
-        // ---------- Стрим запрошенного диапазона ----------
-        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r");
-             OutputStream os = ex.getResponseBody()) {
-            raf.seek(start);
-            byte[] buf = new byte[16384];
-            long remaining = contentLength;
-            while (remaining > 0) {
-                int toRead = (int) Math.min(buf.length, remaining);
-                int n = raf.read(buf, 0, toRead);
-                if (n <= 0) break;
-                os.write(buf, 0, n);
-                remaining -= n;
-            }
-        }
-    }
-
-    public void serveFile(HttpExchange ex, Path file) throws IOException {
-        serveFileWithRange(ex, file, detectContentType(file));
     }
 }

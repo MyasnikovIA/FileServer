@@ -2636,9 +2636,7 @@ FAR.WM._mountSideConnUI = function (win, side) {
         '<div style="display:flex;flex-direction:column;gap:12px;">' +
 
         '<div style="padding:8px 10px;background:#313244;border-left:3px solid #89b4fa;border-radius:4px;font-size:13px;">' +
-        'Подключение только для панели: <b style="color:#89b4fa;">' +
-        (side === 'left' ? 'Левая' : 'Правая') + '</b></div>' +
-
+        '<b style="color:#89b4fa;"></b></div>' +
         '<label style="font-size:12px;color:#a6adc8;">Адрес FileServer' +
         '<input data-role="url" type="text" placeholder="http://127.0.0.1:8080" ' +
         'style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +

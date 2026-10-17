@@ -67,14 +67,9 @@ public class RootHandler implements HttpHandler {
         }
 
         // 4. 404
-        FileServer.sendError(ex, 404, "Not found: " + clean);
+        FileServer.sendError(ex, 404, "Static file not found and no shares configured: " + clean);
     }
 
-    /**
-     * Отдаёт файл из share.
-     *
-     * @param relDecoded — уже декодированный путь внутри share.
-     */
     public void serveFromShare(HttpExchange ex, Config.Share share, String relDecoded)
             throws IOException {
 
@@ -126,7 +121,7 @@ public class RootHandler implements HttpHandler {
         }
 
         if (!Files.isRegularFile(target)) {
-            FileServer.sendError(ex, 404, "Not a file: " + rel);
+            FileServer.sendError(ex, 404, "Not a file in share '" + share.name + "': " + rel);
             return;
         }
 
