@@ -38,6 +38,7 @@ FAR.injectModals = function() {
         'modals/mp3-viewer.html',
         'modals/video-viewer.html',
         'modals/jsdos-viewer.html',
+        'modals/console.html',
         'modals/nes-viewer.html',
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',
@@ -86,6 +87,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof FAR.initBrowser === 'function') {
         FAR.initBrowser();
     }
+    if (typeof FAR.initConsole === 'function') FAR.initConsole();
 
     if (typeof FAR.WM !== 'undefined') {
         setTimeout(function () {

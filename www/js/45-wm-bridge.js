@@ -3153,7 +3153,31 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
     });
 };
 
+// ============================================================
+// Console (WM-окно)
+// ============================================================
 
+FAR.WM._mountConsoleViewer = async function (win, props) {
+    win.el.querySelector('.wm-title-text').textContent = '🖥 Console';
+
+    // Уничтожаем предыдущий инстанс
+    if (win.props._consoleApi) {
+        try { win.props._consoleApi.destroy(); } catch (e) {}
+        win.props._consoleApi = null;
+    }
+
+    win.bodyEl.innerHTML = '';
+    win.bodyEl.style.display = 'flex';
+    win.bodyEl.style.flexDirection = 'column';
+    win.bodyEl.style.minHeight = '0';
+
+    win.props._consoleApi = FAR._createConsole(win.bodyEl, {});
+
+    setTimeout(function () {
+        const inp = win.bodyEl.querySelector('.console-input');
+        if (inp) inp.focus();
+    }, 50);
+};
 
 
 FAR.WM._installOpenFileWrapper();

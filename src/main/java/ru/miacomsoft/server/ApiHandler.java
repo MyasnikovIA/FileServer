@@ -235,7 +235,10 @@ public class ApiHandler implements HttpHandler {
         JSONObject o = new JSONObject();
         o.put("anonymous", s.anonymous);
         o.put("username", s.username == null ? JSONObject.NULL : s.username);
-        if (s.user != null) o.put("quotaMb", s.user.quotaMb);
+        if (s.user != null) {
+            o.put("quotaMb", s.user.quotaMb);
+            o.put("console", s.user.consoleEnabled);   // ←
+        }
         FileServer.sendJson(ex, 200, o.toString());
     }
 
@@ -247,6 +250,7 @@ public class ApiHandler implements HttpHandler {
         info.put("version", "1.6");
         info.put("anonymous", s.anonymous);
         info.put("username", s.username == null ? JSONObject.NULL : s.username);
+        info.put("console", s.user != null && s.user.consoleEnabled);
         long userQuotaMb = -1;
         if (s.user != null && s.user.hasQuota()) userQuotaMb = s.user.quotaMb;
         info.put("userQuotaMb", userQuotaMb);

@@ -1,18 +1,5 @@
 package ru.miacomsoft.server;
 
-// ============================================================
-// AuthService.java — аутентификация запроса.
-//
-// Порядок проверки:
-//   1. Authorization: Bearer <token>
-//   2. X-Auth-Token: <token>
-//   3. Authorization: Basic <base64>
-//   4. Cookie: filebd_token=<token>          ← НОВОЕ
-//   5. ?token=<token>
-//   6. ?user=<u>&pass=<p>
-//   7. Анонимная сессия
-// ============================================================
-
 import com.sun.net.httpserver.HttpExchange;
 
 import java.nio.charset.StandardCharsets;
@@ -43,15 +30,34 @@ public class AuthService {
 
     // ---------- Аутентификация ----------
 
+    /**
+     * Определяет сессию по запросу.
+     *
+     * Порядок проверки (все шаги, КРОМЕ явных — «мягкие»):
+     *   1. Authorization: Bearer <token>   — если токен невалиден, идём дальше
+     *   2. X-Auth-Token: <token>           — если невалиден, идём дальше
+     *   3. Authorization: Basic <base64>   — если невалиден, идём дальше
+     *   4. Cookie: filebd_token=<token>    — если невалиден, идём дальше
+     *   5. ?token=<token>                  — ЕСЛИ УКАЗАН, ТО СТРОГО
+     *   6. ?user=<u>&pass=<p>              — ЕСЛИ УКАЗАН, ТО СТРОГО
+     *   7. Анонимная сессия
+     *
+     * ВАЖНО: именно «мягкость» шагов 1–4 позволяет корректно
+     * работать, когда клиент по ошибке прислал устаревший
+     * Bearer-токен, а актуальная авторизация живёт в cookie.
+     */
     public Session authenticate(HttpExchange ex) {
-        String authHeader  = ex.getRequestHeaders().getFirst("Authorization");
-        String tokenHeader = ex.getRequestHeaders().getFirst("X-Auth-Token");
+        String authHeader   = ex.getRequestHeaders().getFirst("Authorization");
+        String tokenHeader  = ex.getRequestHeaders().getFirst("X-Auth-Token");
         String cookieHeader = ex.getRequestHeaders().getFirst("Cookie");
 
         // 1. Bearer <token>
+        //    Если токен указан, но невалиден — НЕ возвращаем null,
+        //    пробуем следующие способы (cookie / query).
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String tok = authHeader.substring("Bearer ".length()).trim();
-            return sessionFromToken(tok);
+            Session s = sessionFromToken(tok);
+            if (s != null) return s;
         }
 
         // 2. X-Auth-Token
@@ -62,7 +68,8 @@ public class AuthService {
 
         // 3. Basic <base64>
         if (authHeader != null && authHeader.startsWith("Basic ")) {
-            return sessionFromBasic(authHeader);
+            Session s = sessionFromBasic(authHeader);
+            if (s != null) return s;
         }
 
         // 4. Cookie: filebd_token=<token>
@@ -74,18 +81,18 @@ public class AuthService {
             }
         }
 
-        // 5. Query ?token=
+        // 5. Query ?token= — строго: если указан, но невалиден → null
         String query = ex.getRequestURI().getQuery();
         Map<String, String> q = FileServer.parseQuery(query);
 
         String qToken = q.get("token");
         if (qToken != null && !qToken.isEmpty()) {
             Session s = sessionFromToken(qToken);
-            if (s == null) return null; // токен указан, но невалиден
+            if (s == null) return null;
             return s;
         }
 
-        // 6. Query ?user=&pass=
+        // 6. Query ?user=&pass= — строго
         String qUser = q.get("user");
         if (qUser == null) qUser = q.get("username");
         if (qUser != null && !qUser.isEmpty()) {

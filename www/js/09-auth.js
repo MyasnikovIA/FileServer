@@ -8,7 +8,7 @@ FAR.updateAuthUI = function() {
         btn.title = 'Войти в базу данных';
     }
     const ids = ['btnUpload','btnMkdir','btnCopy','btnMove','btnDownload',
-                 'btnZip','btnDelete','btnRefresh','btnDebug','btnMigrate'];
+        'btnZip','btnDelete','btnRefresh','btnDebug','btnMigrate'];
     for (const id of ids) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -28,6 +28,17 @@ FAR.onAuthButton = function () {
         try { localStorage.removeItem(FAR.LS_CONN_LEFT); } catch (e) {}
         try { localStorage.removeItem(FAR.LS_CONN_RIGHT); } catch (e) {}
 
+        // ============================================================
+        // КРИТИЧНО: очищаем глобальный токен и cookie.
+        // Без этого следующий логин оставит в FAR.authToken
+        // старый токен, обёртка над fetch продолжит подставлять
+        // его в Authorization, и сервер будет отвечать 401
+        // (см. AuthService.authenticate, шаг «Bearer»).
+        // ============================================================
+        if (typeof FAR.clearAuthToken === 'function') {
+            try { FAR.clearAuthToken(); } catch (e) { /* ignore */ }
+        }
+
         // Если открыт оконный режим — выходим в панельный
         if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active) {
             try { FAR.WM.exit(); } catch (e) {}
@@ -35,6 +46,49 @@ FAR.onAuthButton = function () {
         // Сбрасываем сохранённый режим: следующий вход — с дефолта
         if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.clearMode === 'function') {
             FAR.WM.clearMode();
+        }
+
+        // ---- Снимаем флаг console и выгружаем приложение ----
+        FAR.consoleEnabled = false;
+        if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.unregisterConsoleApp === 'function') {
+            try { FAR.WM.unregisterConsoleApp(); } catch (e) {}
+        }
+
+        FAR.side.left  = FAR.createSideContext('left');
+        FAR.side.right = FAR.createSideContext('right');
+        FAR.currentConn = null;
+
+        FAR.renderPanel('left');
+        FAR.renderPanel('right');
+        FAR.updateAuthUI();
+        FAR.updateTotalSize();
+        FAR.updateConnIndicators();
+        FAR.setStatus('🔓 Вы вышли из системы');
+        FAR.openConnModal();
+    } else {
+        FAR.openConnModal();
+    }
+};
+FAR.onAuthButton = function () {
+    if (FAR.db) {
+        if (!confirm('Выйти из системы?\nСохранённые данные подключения будут удалены.')) return;
+        FAR.clearConnFromLS();
+        try { localStorage.removeItem(FAR.LS_CONN_LEFT); } catch (e) {}
+        try { localStorage.removeItem(FAR.LS_CONN_RIGHT); } catch (e) {}
+
+        // Если открыт оконный режим — выходим в панельный
+        if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active) {
+            try { FAR.WM.exit(); } catch (e) {}
+        }
+        // Сбрасываем сохранённый режим: следующий вход — с дефолта
+        if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.clearMode === 'function') {
+            FAR.WM.clearMode();
+        }
+
+        // ---- Снимаем флаг console и выгружаем приложение ----
+        FAR.consoleEnabled = false;
+        if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.unregisterConsoleApp === 'function') {
+            try { FAR.WM.unregisterConsoleApp(); } catch (e) {}
         }
 
         FAR.side.left  = FAR.createSideContext('left');

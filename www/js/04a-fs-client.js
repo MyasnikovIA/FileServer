@@ -115,6 +115,7 @@ FAR.FsClient.prototype.info = async function () {
         backend_adapter: 'FileServer',
         username: info.username,
         anonymous: info.anonymous,
+        console: !!info.console,
         shares: info.shares || [],
         userQuotaMb: info.userQuotaMb,
         userUsedBytes: info.userUsedBytes,

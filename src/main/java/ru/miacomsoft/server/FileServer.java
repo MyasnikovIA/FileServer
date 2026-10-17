@@ -34,6 +34,7 @@ public class FileServer {
     private static QuotaService quota;
     private static FileWatcher fileWatcher;
     private static Path webRoot;
+    private static ConsoleService consoleService;
 
     // Сохраняем как статические поля, чтобы ApiHandler мог
     // вызвать RootHandler.serveFromShare для /api/<share>/<path>.
@@ -74,6 +75,12 @@ public class FileServer {
         auth   = new AuthService(config, tokens);
         quota  = new QuotaService(auth);
 
+        consoleService = new ConsoleService(
+                config.consoleShell,
+                config.consoleCwd,
+                config.consoleTimeoutSec,
+                config.consoleMaxOutputBytes);
+
         HttpServer server = HttpServer.create(
                 new InetSocketAddress(config.host, config.port), 0);
 
@@ -84,6 +91,7 @@ public class FileServer {
         server.createContext("/api/events", new SseHandler());
         server.createContext("/api",        new ApiHandler());
         server.createContext("/",           rootHandler);
+        server.createContext("/api/console", new ConsoleHandler());
 
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
@@ -204,4 +212,5 @@ public class FileServer {
         try { return URLDecoder.decode(s, "UTF-8"); }
         catch (Exception e) { return s; }
     }
+    static ConsoleService console() { return consoleService; }
 }

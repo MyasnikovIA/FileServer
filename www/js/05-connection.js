@@ -102,6 +102,20 @@ FAR.connectToDb = async function (cfg) {
     });
 
     const info = await client.info();
+    // ---- Пробрасываем флаг console наверх ----
+    FAR.consoleEnabled = !!info.console;
+    FAR.registerServer(baseUrl);
+
+    if (FAR.consoleEnabled && typeof FAR.WM !== 'undefined'
+        && typeof FAR.WM.registerConsoleApp === 'function') {
+        FAR.WM.registerConsoleApp();
+        console.log('[console] приложение Console зарегистрировано');
+    } else if (typeof FAR.WM !== 'undefined'
+        && typeof FAR.WM.unregisterConsoleApp === 'function') {
+        FAR.WM.unregisterConsoleApp();
+        console.log('[console] приложение Console не разрешено');
+    }
+
     await client.allDocs({ limit: 1 });
 
     return {
