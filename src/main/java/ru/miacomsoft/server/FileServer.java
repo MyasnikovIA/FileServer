@@ -1,14 +1,5 @@
 package ru.miacomsoft.server;
 
-// ============================================================
-// FileServer.java — HTTP-сервер файлового доступа + статика.
-//
-// Контексты:
-//   /api/events  — SSE (самый длинный префикс, регистрируется первым)
-//   /api         — REST API + fallback /api/<share>/<path>
-//   /            — RootHandler (статика → share)
-// ============================================================
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.json.JSONObject;
@@ -35,9 +26,8 @@ public class FileServer {
     private static FileWatcher fileWatcher;
     private static Path webRoot;
     private static ConsoleService consoleService;
+    private static VideoChatServer videoChatServer; // <-- НОВОЕ
 
-    // Сохраняем как статические поля, чтобы ApiHandler мог
-    // вызвать RootHandler.serveFromShare для /api/<share>/<path>.
     private static StaticHandler staticHandler;
     private static RootHandler   rootHandler;
 
@@ -62,7 +52,6 @@ public class FileServer {
         if (port > 0) config.port = port;
         if (host != null) config.host = host;
 
-        // ---- Каталог статики ----
         String webPathStr = (webOverride != null) ? webOverride : config.webPath;
         webRoot = Paths.get(webPathStr).toAbsolutePath().normalize();
         if (!Files.isDirectory(webRoot)) {
@@ -87,7 +76,6 @@ public class FileServer {
         staticHandler = new StaticHandler(webRoot);
         rootHandler   = new RootHandler(staticHandler);
 
-        // Порядок неважен — HttpServer выбирает самый длинный префикс.
         server.createContext("/api/events", new SseHandler());
         server.createContext("/api",        new ApiHandler());
         server.createContext("/",           rootHandler);
@@ -95,6 +83,17 @@ public class FileServer {
 
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
+
+        // Запуск VideoChat
+        if (config.videoChatEnabled) {
+            videoChatServer = new VideoChatServer(config.videoChatPort, config.wsGuid);
+            try {
+                videoChatServer.start();
+                System.out.println("[FileServer] VideoChat started on port " + config.videoChatPort);
+            } catch (Exception e) {
+                System.err.println("[FileServer] Failed to start VideoChat: " + e.getMessage());
+            }
+        }
 
         startWatcher();
 
@@ -108,6 +107,7 @@ public class FileServer {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try { server.stop(0); } catch (Exception ignored) {}
             try { if (fileWatcher != null) fileWatcher.stop(); } catch (Exception ignored) {}
+            try { if (videoChatServer != null) videoChatServer.stop(); } catch (Exception ignored) {} // <-- НОВОЕ
             for (SseConnection c : sseClients.values()) c.close();
         }));
     }
@@ -135,10 +135,7 @@ public class FileServer {
     static QuotaService quota() { return quota; }
     static Path webRoot() { return webRoot; }
 
-    /** Доступ к RootHandler для ApiHandler (fallback /api/<share>/<path>). */
     static RootHandler rootHandler() { return rootHandler; }
-
-    /** Доступ к StaticHandler для переиспользования в ApiHandler при необходимости. */
     static StaticHandler staticHandler() { return staticHandler; }
 
     static void broadcastEvent(String event, String data) {
@@ -148,13 +145,7 @@ public class FileServer {
         }
     }
 
-    // ---------- HTTP utilities ----------
     static void handleCors(HttpExchange ex) {
-        // ============================================================
-        // ВАЖНО: с Access-Control-Allow-Credentials: true браузер
-        // требует конкретный Origin (не «*»). Поэтому подставляем
-        // Origin из запроса, если он есть.
-        // ============================================================
         String origin = ex.getRequestHeaders().getFirst("Origin");
         if (origin != null && !origin.isEmpty()) {
             ex.getResponseHeaders().set("Access-Control-Allow-Origin", origin);

@@ -1,0 +1,39 @@
+// bridge.js — content-script плагина. Пробрасывает postMessage
+// со страницы в background.js. Не открывает собственный WS.
+
+(() => {
+    // Сообщаем странице, что расширение установлено
+    window.postMessage({ __extReady: true }, '*');
+
+    window.addEventListener('message', (e) => {
+        if (e.source !== window) return;
+        if (!e.data || !e.data.__toExt) return;
+
+        const { type, payload, __id } = e.data;
+        const reply = (r) => window.postMessage({ __replyTo: __id, ...r }, '*');
+
+        if (type === 'ext-ping') {
+            reply({ ok: true });
+            return;
+        }
+
+        let host = 'localhost';
+        try { host = location.hostname; } catch (e) {}
+
+        if (type === 'start-broadcast') {
+            chrome.runtime.sendMessage({
+                type: 'page-start-broadcast',
+                room: (payload && payload.room) || 'main',
+                host: host
+            }).then(reply).catch((err) => reply({ ok: false, error: err.message }));
+            return;
+        }
+
+        if (type === 'stop-broadcast') {
+            chrome.runtime.sendMessage({ type: 'stop' })
+                .then(reply)
+                .catch((err) => reply({ ok: false, error: err.message }));
+            return;
+        }
+    });
+})();

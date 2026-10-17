@@ -242,6 +242,7 @@ public class ApiHandler implements HttpHandler {
         FileServer.sendJson(ex, 200, o.toString());
     }
 
+    // Фрагмент файла ApiHandler.java (замените только метод handleInfo)
     private void handleInfo(HttpExchange ex, String method, AuthService.Session s)
             throws IOException {
         if (!"GET".equals(method)) { FileServer.sendError(ex, 405, "Method not allowed"); return; }
@@ -251,6 +252,8 @@ public class ApiHandler implements HttpHandler {
         info.put("anonymous", s.anonymous);
         info.put("username", s.username == null ? JSONObject.NULL : s.username);
         info.put("console", s.user != null && s.user.consoleEnabled);
+        info.put("videoChatEnabled", FileServer.config().videoChatEnabled);
+        info.put("videoChatPort", FileServer.config().videoChatPort);
         long userQuotaMb = -1;
         if (s.user != null && s.user.hasQuota()) userQuotaMb = s.user.quotaMb;
         info.put("userQuotaMb", userQuotaMb);

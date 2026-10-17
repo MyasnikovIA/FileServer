@@ -39,6 +39,8 @@ FAR.injectModals = function() {
         'modals/video-viewer.html',
         'modals/jsdos-viewer.html',
         'modals/console.html',
+        'modals/videochat-viewer.html',
+        'modals/videochat-broadcaster.html',
         'modals/nes-viewer.html',
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',

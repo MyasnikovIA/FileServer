@@ -16,10 +16,15 @@ public class Config {
     public String webPath = "www";
 
     // ---- Настройки консоли (верхнеуровневые) ----
-    public String consoleShell = "";                 // "" = авто (bash/cmd)
-    public String consoleCwd = "";                   // "" = текущий каталог процесса
+    public String consoleShell = "";
+    public String consoleCwd = "";
     public long consoleTimeoutSec = 300;
     public long consoleMaxOutputBytes = 1024 * 1024;
+
+    // ---- Настройки VideoChat ----
+    public boolean videoChatEnabled = false;
+    public int videoChatPort = 8081;
+    public String wsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     public Map<String, User> users = new LinkedHashMap<>();
     public List<Share> shares = new ArrayList<>();
@@ -30,7 +35,7 @@ public class Config {
         public String name = "";
         public String password = "";
         public long quotaMb = -1;
-        public boolean consoleEnabled = false;       // ← новая опция
+        public boolean consoleEnabled = false;
 
         public boolean hasQuota() { return quotaMb >= 0; }
     }
@@ -95,6 +100,15 @@ public class Config {
             cfg.consoleMaxOutputBytes = console.optLong("maxOutputBytes", 1024 * 1024);
         }
 
+        // ---- videochat (глобальные настройки) ----
+        JSONObject vc = root.optJSONObject("videochat");
+        if (vc != null) {
+            cfg.videoChatEnabled = vc.optBoolean("enabled", false);
+            cfg.videoChatPort = vc.optInt("port", 8081);
+            String guid = vc.optString("wsGuid", "").trim();
+            if (!guid.isEmpty()) cfg.wsGuid = guid;
+        }
+
         // users
         JSONArray arrU = root.optJSONArray("users");
         if (arrU != null) {
@@ -104,13 +118,13 @@ public class Config {
                 user.name = u.optString("name", "").trim();
                 user.password = u.optString("password", "");
                 user.quotaMb = u.optLong("quota", -1);
-                user.consoleEnabled = u.optBoolean("console", false);   // ←
+                user.consoleEnabled = u.optBoolean("console", false);
                 if (user.name.isEmpty()) continue;
                 cfg.users.put(user.name, user);
             }
         }
 
-        // shares (как раньше)
+        // shares
         boolean rootShareLogged = false;
         JSONArray arrS = root.optJSONArray("shares");
         if (arrS != null) {

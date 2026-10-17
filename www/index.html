@@ -32,6 +32,8 @@
     <link rel="stylesheet" href="css/pdf-viewer.css">
     <link rel="stylesheet" href="css/mp3-viewer.css">
     <link rel="stylesheet" href="css/video-viewer.css">
+    <link rel="stylesheet" href="css/videochat-viewer.css">
+    <link rel="stylesheet" href="css/videochat-broadcaster.css">
     <link rel="stylesheet" href="css/wm.css">
 </head>
 <body>
@@ -48,6 +50,8 @@
     <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру" disabled>🔍 Debug</button>
     <button onclick="FAR.openGamepadSetup()" id="btnGamepad" title="Настроить джойстик">🎮 Джойстик</button>
     <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)" style="display:none;">🖥️ Консоль</button>
+    <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺 Трансляция</button>
+    <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">🎥 Вещать</button>
     <button onclick="FAR.onAuthButton()" class="btn-auth" id="btnAuth" title="Войти / Выйти">🔐 LogIn</button>
     <button onclick="FAR.WM.toggle()" id="btnWM" title="Оконный режим">🖥 Рабочий стол</button>
     <button onclick="FAR.gamepadModeCycle()"
@@ -168,5 +172,7 @@
 <script src="js/48-wm-wallpaper.js"></script>
 <script src="js/49-wm-wallpaper-360.js"></script>
 <script src="js/51-console.js"></script>
+<script src="js/52-videochat-viewer.js"></script>
+<script src="js/53-videochat-broadcaster.js"></script>
 </body>
 </html>

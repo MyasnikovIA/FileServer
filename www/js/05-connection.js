@@ -104,6 +104,13 @@ FAR.connectToDb = async function (cfg) {
     const info = await client.info();
     // ---- Пробрасываем флаг console наверх ----
     FAR.consoleEnabled = !!info.console;
+
+    // ---- Пробрасываем настройки VideoChat ----
+    FAR.videoChatEnabled = !!info.videoChatEnabled;
+    FAR.videoChatPort = (typeof info.videoChatPort === 'number' && info.videoChatPort > 0)
+        ? info.videoChatPort
+        : 8081;
+
     FAR.registerServer(baseUrl);
 
     if (FAR.consoleEnabled && typeof FAR.WM !== 'undefined'
