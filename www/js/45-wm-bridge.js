@@ -1016,60 +1016,93 @@ FAR.WM._mountMp3Viewer = async function (win, props) {
 
 // ---- Видео ----
 
+// ---- Видео (WM-окно, прямой URL + Range) ----
+
 FAR.WM._mountVideoViewer = async function (win, props) {
     const item = props.file;
     const side = props.side || FAR.activePanel;
 
     win.el.querySelector('.wm-title-text').textContent = '🎬 ' + item.name;
+
     win.bodyEl.innerHTML =
         '<div style="height:100%;background:#000;display:flex;flex-direction:column;">' +
         '<div data-role="stage" style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0;"></div>' +
-        '<div data-role="status" style="padding:6px 12px;background:#111;color:#a6adc8;font-size:11px;text-align:center;"></div>' +
+        '<div data-role="status" style="padding:6px 12px;background:#111;color:#a6adc8;font-size:11px;text-align:center;">Загрузка…</div>' +
         '</div>';
 
-    const stage = win.bodyEl.querySelector('[data-role="stage"]');
+    const stage    = win.bodyEl.querySelector('[data-role="stage"]');
     const statusEl = win.bodyEl.querySelector('[data-role="status"]');
 
-    statusEl.textContent = 'Загрузка…';
-
-    try {
-        const r = await FAR.readFileBodyFromSide(side, item);
-        const blob = new Blob([r.data], { type: r.contentType || 'video/mp4' });
-        const url = URL.createObjectURL(blob);
-        FAR.WM._trackBlobUrl(win, url);
-
-        const video = document.createElement('video');
-        video.controls = true;
-        video.autoplay = true;
-        video.playsInline = true;
-        video.src = url;
-        video.style.cssText = 'max-width:100%;max-height:100%;';
-        stage.appendChild(video);
-
-        win.props._videoEl = video;
-
-        statusEl.textContent = FAR.formatSize(r.data.length) +
-            ' • ' + (r.contentType || 'video/mp4');
-
-        video.addEventListener('error', function () {
-            const err = video.error;
-            if (err && err.code === 1) return;
-            let reason = 'неизвестная ошибка';
-            if (err) {
-                switch (err.code) {
-                    case 2: reason = 'сетевая ошибка'; break;
-                    case 3: reason = 'ошибка декодирования'; break;
-                    case 4: reason = 'формат не поддерживается'; break;
-                }
-            }
-            FAR.toast('Ошибка видео: ' + reason, 'error');
-        });
-
-        FAR.WM._installViewerNavButtons(win, item, side);
-    } catch (e) {
-        statusEl.textContent = 'Ошибка: ' + e.message;
+    // ============================================================
+    // Прямой URL + Range. Как и в панельном режиме, файл НЕ
+    // качается в память — браузер сам делает запросы по
+    // диапазонам и буферизует по мере воспроизведения.
+    // ============================================================
+    const directUrl = FAR.buildDirectFileUrl(item, side);
+    if (!directUrl) {
+        statusEl.textContent = 'Не удалось построить URL';
         statusEl.style.color = '#f38ba8';
+        return;
     }
+
+    let isCrossOrigin = false;
+    try { isCrossOrigin = new URL(directUrl).origin !== location.origin; } catch (e) {}
+
+    let url = directUrl;
+    if (isCrossOrigin && FAR.authToken) {
+        url += (url.includes('?') ? '&' : '?') +
+            'token=' + encodeURIComponent(FAR.authToken);
+    }
+
+    const sizeStr = (item.size > 0) ? ' • ' + FAR.formatSize(item.size) : '';
+    const ctStr = item.contentType || 'video/mp4';
+    statusEl.textContent = ctStr + sizeStr;
+
+    const video = document.createElement('video');
+    video.controls = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    if (isCrossOrigin) video.crossOrigin = 'anonymous';
+    video.src = url;
+    video.style.cssText = 'max-width:100%;max-height:100%;';
+    stage.appendChild(video);
+
+    win.props._videoEl = video;
+
+    // События
+    video.addEventListener('error', function () {
+        const err = video.error;
+        if (err && err.code === 1) return;   // ABORTED — норма
+        let reason = 'неизвестная ошибка';
+        if (err) {
+            switch (err.code) {
+                case 2: reason = 'сетевая ошибка'; break;
+                case 3: reason = 'ошибка декодирования'; break;
+                case 4: reason = 'формат не поддерживается'; break;
+            }
+        }
+        FAR.toast('Ошибка видео: ' + reason, 'error');
+        statusEl.textContent = 'Ошибка: ' + reason;
+        statusEl.style.color = '#f38ba8';
+    });
+
+    // Индикатор буферизации в футере
+    video.addEventListener('progress', function () {
+        const dur = video.duration;
+        if (!isFinite(dur) || dur <= 0) return;
+        let bufEnd = 0;
+        for (let i = 0; i < video.buffered.length; i++) {
+            bufEnd = Math.max(bufEnd, video.buffered.end(i));
+        }
+        const pct = Math.round((bufEnd / dur) * 100);
+        statusEl.textContent =
+            ctStr + sizeStr +
+            ' • буферизовано: ' + FAR._videoFormatTime(bufEnd) +
+            ' / ' + FAR._videoFormatTime(dur) +
+            ' (' + pct + '%)';
+    });
+
+    FAR.WM._installViewerNavButtons(win, item, side);
 };
 
 // ---- PDF ----

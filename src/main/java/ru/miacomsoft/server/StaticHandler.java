@@ -17,6 +17,7 @@ import com.sun.net.httpserver.HttpHandler;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -252,41 +253,7 @@ public class StaticHandler implements HttpHandler {
         return target;
     }
 
-    // ============================================================
-    // serve
-    // ============================================================
 
-    public void serveFile(HttpExchange ex, Path file) throws IOException {
-        String method = ex.getRequestMethod().toUpperCase();
-        boolean isHead = "HEAD".equals(method);
-        if (!isHead && !"GET".equals(method)) {
-            FileServer.sendError(ex, 405, "Method not allowed");
-            return;
-        }
-
-        String ct = detectContentType(file);
-        long size = Files.size(file);
-
-        FileServer.handleCors(ex);
-        ex.getResponseHeaders().set("Content-Type", ct);
-        ex.getResponseHeaders().set("Content-Length", String.valueOf(size));
-        ex.getResponseHeaders().set("Cache-Control", "no-cache");
-        ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-
-        if (isHead) {
-            ex.sendResponseHeaders(200, -1);
-            ex.close();
-            return;
-        }
-
-        ex.sendResponseHeaders(200, size);
-        try (InputStream is = Files.newInputStream(file);
-             OutputStream os = ex.getResponseBody()) {
-            byte[] buf = new byte[16384];
-            int n;
-            while ((n = is.read(buf)) > 0) os.write(buf, 0, n);
-        }
-    }
 
     // ============================================================
     // full handler
@@ -314,5 +281,123 @@ public class StaticHandler implements HttpHandler {
             return;
         }
         serveFile(ex, file);
+    }
+    // ============================================================
+    // serve with HTTP Range support
+    // ============================================================
+    //
+    // Поддерживает:
+    //   • GET  /  HEAD
+    //   • Range: bytes=start-end
+    //   • Range: bytes=start-       (от start до конца)
+    //   • Range: bytes=-suffix      (последние suffix байт)
+    //   • 206 Partial Content + Content-Range
+    //   • 416 Range Not Satisfiable
+    //   • Accept-Ranges: bytes
+    //
+    // Без Range возвращает 200 с полным телом (как раньше).
+    // Именно это позволяет <video> в браузере буферизовать
+    // файл лениво и перематывать без скачивания целиком.
+
+    public static void serveFileWithRange(HttpExchange ex, Path file, String contentType)
+            throws IOException {
+
+        String method = ex.getRequestMethod().toUpperCase();
+        boolean isHead = "HEAD".equals(method);
+        if (!isHead && !"GET".equals(method)) {
+            FileServer.sendError(ex, 405, "Method not allowed");
+            return;
+        }
+
+        long size = Files.size(file);
+
+        FileServer.handleCors(ex);
+        ex.getResponseHeaders().set("Content-Type", contentType);
+        ex.getResponseHeaders().set("Accept-Ranges", "bytes");
+        ex.getResponseHeaders().set("Cache-Control", "no-cache");
+        ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+
+        // ---------- Разбор Range ----------
+        String rangeHeader = ex.getRequestHeaders().getFirst("Range");
+        long start = 0, end = size - 1;
+        boolean partial = false;
+
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            String range = rangeHeader.substring(6).trim();
+            int comma = range.indexOf(',');
+            if (comma > 0) range = range.substring(0, comma);   // берём только первый диапазон
+
+            int dash = range.indexOf('-');
+            if (dash >= 0) {
+                String startStr = range.substring(0, dash).trim();
+                String endStr   = range.substring(dash + 1).trim();
+                try {
+                    if (startStr.isEmpty() && !endStr.isEmpty()) {
+                        // bytes=-N — последние N байт
+                        long suffix = Long.parseLong(endStr);
+                        start = Math.max(0, size - suffix);
+                        end = size - 1;
+                        partial = true;
+                    } else if (!startStr.isEmpty() && endStr.isEmpty()) {
+                        // bytes=N- — от N до конца
+                        start = Long.parseLong(startStr);
+                        end = size - 1;
+                        partial = true;
+                    } else if (!startStr.isEmpty() && !endStr.isEmpty()) {
+                        // bytes=N-M — диапазон
+                        start = Long.parseLong(startStr);
+                        end = Math.min(Long.parseLong(endStr), size - 1);
+                        partial = true;
+                    }
+                } catch (NumberFormatException e) {
+                    partial = false;   // кривой заголовок — отдадим полный файл
+                }
+            }
+        }
+
+        // Некорректный диапазон
+        if (partial && (start > end || start >= size)) {
+            ex.getResponseHeaders().set("Content-Range", "bytes */" + size);
+            ex.sendResponseHeaders(416, -1);
+            ex.close();
+            return;
+        }
+
+        long contentLength = partial ? (end - start + 1) : size;
+        int status = partial ? 206 : 200;
+
+        if (partial) {
+            ex.getResponseHeaders().set("Content-Range",
+                    "bytes " + start + "-" + end + "/" + size);
+        }
+
+        // HEAD — заголовки как у GET, тела нет
+        if (isHead) {
+            ex.getResponseHeaders().set("Content-Length", String.valueOf(contentLength));
+            ex.sendResponseHeaders(status, -1);
+            ex.close();
+            return;
+        }
+
+        ex.sendResponseHeaders(status, contentLength);
+
+        // ---------- Стрим запрошенного диапазона ----------
+        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r");
+             OutputStream os = ex.getResponseBody()) {
+            raf.seek(start);
+            byte[] buf = new byte[16384];
+            long remaining = contentLength;
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buf.length, remaining);
+                int n = raf.read(buf, 0, toRead);
+                if (n <= 0) break;
+                os.write(buf, 0, n);
+                remaining -= n;
+            }
+        }
+    }
+
+    public void serveFile(HttpExchange ex, Path file) throws IOException {
+        serveFileWithRange(ex, file, detectContentType(file));
     }
 }

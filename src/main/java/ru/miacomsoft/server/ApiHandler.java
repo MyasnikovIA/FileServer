@@ -444,18 +444,15 @@ public class ApiHandler implements HttpHandler {
             FileServer.sendError(ex, 404, "Not a file");
             return;
         }
-        String ct = StaticHandler.detectContentType(fsPath);
-        long size = Files.size(fsPath);
-        FileServer.handleCors(ex);
-        ex.getResponseHeaders().set("Content-Type", ct);
-        ex.getResponseHeaders().set("Content-Length", String.valueOf(size));
-        ex.sendResponseHeaders(200, size);
-        try (InputStream is = Files.newInputStream(fsPath);
-             OutputStream os = ex.getResponseBody()) {
-            byte[] buf = new byte[16384];
-            int n;
-            while ((n = is.read(buf)) > 0) os.write(buf, 0, n);
-        }
+        // Единый путь: и /api/read, и прямые URL
+        // (/<share>/<path> через RootHandler) теперь
+        // поддерживают HTTP Range. Это позволяет <video>
+        // и другим media-элементам буферизовать лениво и
+        // перематывать без скачивания всего файла.
+        StaticHandler.serveFileWithRange(
+                ex,
+                fsPath,
+                StaticHandler.detectContentType(fsPath));
     }
 
     private void handleWrite(HttpExchange ex, String method, Map<String, String> q,

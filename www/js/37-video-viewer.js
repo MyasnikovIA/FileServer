@@ -212,15 +212,17 @@ FAR.closeVideoViewerOutside = function (e) {
 // ============================================================
 // Запуск: полная загрузка (fallback) или MSE
 // ============================================================
-
 FAR._videoStart = async function (item, side) {
     const loading     = document.getElementById('videoLoading');
     const loadingText = document.getElementById('videoLoadingText');
     const info        = document.getElementById('videoViewerInfo');
 
-    // Метаданные
     FAR._videoFileSize = item.size || 0;
     FAR._videoTotalBytes = FAR._videoFileSize;
+    FAR._videoLoadedBytes = 0;
+    FAR._videoLoadedStart = 0;
+    FAR._videoLoadedEnd = 0;
+    FAR._videoUpdateLoadStatus();
 
     const contentType = item.contentType || 'video/mp4';
     FAR._videoCurrentMeta = { name: item.name, contentType, size: FAR._videoFileSize };
@@ -229,142 +231,99 @@ FAR._videoStart = async function (item, side) {
         info.textContent = '🎬 ' + FAR.formatSize(FAR._videoFileSize);
     }
 
-    // MSE-режим имеет смысл только если браузер его поддерживает
-    const mseSupported = typeof window.MediaSource !== 'undefined' ||
-                         typeof window.ManagedMediaSource !== 'undefined';
-
-    if (!mseSupported) {
-        loadingText.textContent = 'Загрузка (без MSE)…';
-        await FAR._videoLoadFull(item, side);
+    // ============================================================
+    // Прямой URL к видео. Сервер теперь поддерживает HTTP Range,
+    // поэтому <video> сам делает запросы по диапазонам и
+    // буферизует лениво. Полный файл в память НЕ качается.
+    // ============================================================
+    const directUrl = FAR.buildDirectFileUrl(item, side);
+    if (!directUrl) {
+        loading.classList.add('hidden');
+        FAR.toast('Не удалось построить URL видео', 'error');
         return;
     }
 
-    // ==== MSE-режим ====
-    loadingText.textContent = 'Инициализация MSE…';
+    // Определяем cross-origin (панель на другом сервере)
+    let isCrossOrigin = false;
+    try { isCrossOrigin = new URL(directUrl).origin !== location.origin; } catch (e) {}
 
-    const MS = window.ManagedMediaSource || window.MediaSource;
-    FAR._videoMediaSource = new MS();
-    FAR._videoObjectUrl = URL.createObjectURL(FAR._videoMediaSource);
-    FAR._videoEl.src = FAR._videoObjectUrl;
+    let url = directUrl;
+    if (isCrossOrigin) {
+        // Для cross-origin cookie SameSite=Lax не отправится.
+        // Прокидываем токен в query (?token=) — сервер его понимает
+        // (AuthService.authenticate, шаг 5).
+        FAR._videoEl.crossOrigin = 'anonymous';
+        if (FAR.authToken) {
+            url += (url.includes('?') ? '&' : '?') +
+                'token=' + encodeURIComponent(FAR.authToken);
+        }
+    } else {
+        // Для same-origin используем cookie (безопаснее, токен
+        // не утекает в URL). Cookie ставится при /api/login
+        // с SameSite=Lax и Path=/ — она уходит с запросами <video>.
+        FAR._videoEl.removeAttribute('crossorigin');
+    }
 
-    // Ждём sourceopen
+    // ============================================================
+    // Fallback: если прямой URL не сработал (сеть/auth/404),
+    // грузим полностью через readFileBodyFromSide.
+    // ============================================================
+    let fellBack = false;
+    const onError = async function () {
+        if (fellBack) return;
+        fellBack = true;
+        FAR._videoEl.removeEventListener('error', onError);
+        console.warn('[video] direct URL failed, falling back to full download');
+        FAR._videoCleanupMediaSource();
+        try {
+            await FAR._videoLoadFull(item, side);
+        } catch (e) {
+            loading.classList.add('hidden');
+            FAR.toast('Не удалось загрузить видео: ' + e.message, 'error');
+        }
+    };
+    FAR._videoEl.addEventListener('error', onError);
+
+    loadingText.textContent = 'Загрузка…';
+
+    FAR._videoEl.src = url;
+    try { FAR._videoEl.load(); } catch (e) {}
+
+    // ============================================================
+    // Ждём loadedmetadata — как только браузер получил первые
+    // байты (Range-запрос) и знает duration, начинаем play().
+    // Для больших файлов это происходит через доли секунды.
+    // ============================================================
     try {
         await new Promise(function (resolve, reject) {
-            const ms = FAR._videoMediaSource;
-            const onOpen = function () {
-                ms.removeEventListener('sourceopen', onOpen);
-                ms.removeEventListener('sourceended', onEnded);
-                resolve();
+            const v = FAR._videoEl;
+            const cleanup = function () {
+                v.removeEventListener('loadedmetadata', onMeta);
+                v.removeEventListener('error', onErr);
             };
-            const onEnded = function () {
-                ms.removeEventListener('sourceopen', onOpen);
-                ms.removeEventListener('sourceended', onEnded);
-                reject(new Error('MediaSource closed before open'));
+            const onMeta = function () { cleanup(); resolve(); };
+            const onErr = function () {
+                cleanup();
+                reject(new Error('video error during metadata load: ' +
+                    (v.error && v.error.code)));
             };
-            ms.addEventListener('sourceopen', onOpen);
-            ms.addEventListener('sourceended', onEnded);
-            // Страховочный таймаут
-            setTimeout(function () {
-                if (FAR._videoMediaSource && FAR._videoMediaSource.readyState !== 'open') {
-                    reject(new Error('sourceopen timeout'));
-                }
-            }, 5000);
+            v.addEventListener('loadedmetadata', onMeta);
+            v.addEventListener('error', onErr);
+            setTimeout(function () { cleanup(); reject(new Error('metadata timeout')); }, 15000);
         });
     } catch (e) {
-        console.warn('MSE: sourceopen failed:', e, '— fallback');
-        FAR._videoCleanupMediaSource();
-        await FAR._videoLoadFull(item, side);
+        // onError уже вызван — fallback запущен, просто выходим
+        console.warn('[video] metadata failed:', e);
         return;
     }
 
-    // Подбираем mime-тип
-    const mime = FAR._videoPickMime(contentType);
-    if (!mime) {
-        console.warn('MSE: mime не подобран для', contentType, '— fallback');
-        FAR._videoCleanupMediaSource();
-        await FAR._videoLoadFull(item, side);
-        return;
-    }
+    // Обновляем индикатор буферизации
+    FAR._videoUpdateLoadStatus();
 
-    // Создаём SourceBuffer
-    try {
-        FAR._videoSourceBuffer = FAR._videoMediaSource.addSourceBuffer(mime);
-    } catch (e) {
-        console.warn('MSE: addSourceBuffer failed:', e, '— fallback');
-        FAR._videoCleanupMediaSource();
-        await FAR._videoLoadFull(item, side);
-        return;
-    }
-
-    // Ждём, пока <video> получит метаданные (HAVE_METADATA).
-    // Это ЕДИНСТВЕННЫЙ надёжный сигнал, что демаксер открыл контейнер.
-    // Если за 5 секунд не получили — значит mime не подошёл,
-    // откатываемся на полную загрузку.
-    const metadataPromise = new Promise(function (resolve, reject) {
-        const v = FAR._videoEl;
-        const cleanup = function () {
-            v.removeEventListener('loadedmetadata', onMeta);
-            v.removeEventListener('error', onErr);
-        };
-        const onMeta = function () { cleanup(); resolve(); };
-        const onErr  = function () {
-            cleanup();
-            reject(new Error('video error during metadata load: ' + (v.error && v.error.code)));
-        };
-        v.addEventListener('loadedmetadata', onMeta);
-        v.addEventListener('error', onErr);
-        setTimeout(function () { cleanup(); reject(new Error('loadedmetadata timeout')); }, 5000);
-    });
-
-    // Читаем файл и кормим MSE (без endOfStream!)
-    loadingText.textContent = 'Первичная загрузка…';
-    let appendFailed = false;
-    try {
-        const { data, contentType: realCT } = await FAR.readFileBodyFromSide(side, item);
-
-        FAR._videoLoadedBytes = data.length;
-        FAR._videoLoadedStart = 0;
-        FAR._videoLoadedEnd   = data.length;
-        FAR._videoUpdateLoadStatus();
-
-        // Уточняем mime по реальному contentType из БД
-        // (иногда метаданные FileBD имеют application/octet-stream,
-        //  а реальный тип — video/mp4 — можно угадать только по расширению)
-        if (realCT && realCT !== contentType &&
-            FAR._videoMediaSource.readyState === 'open') {
-            const realMime = FAR._videoPickMime(realCT);
-            if (realMime && realMime !== mime) {
-                try {
-                    FAR._videoMediaSource.removeSourceBuffer(FAR._videoSourceBuffer);
-                    FAR._videoSourceBuffer = FAR._videoMediaSource.addSourceBuffer(realMime);
-                } catch (e) { /* оставляем как было */ }
-            }
-        }
-
-        await FAR._videoAppendChunk(data.buffer || data);
-    } catch (e) {
-        console.warn('MSE: appendBuffer failed:', e);
-        appendFailed = true;
-    }
-
-    // Если append упал — сразу в fallback
-    if (appendFailed) {
-        FAR._videoCleanupMediaSource();
-        await FAR._videoLoadFull(item, side);
-        return;
-    }
-
-    // Ждём loadedmetadata с таймаутом
-    try {
-        await metadataPromise;
-    } catch (e) {
-        console.warn('MSE: metadata not received:', e, '— fallback');
-        FAR._videoCleanupMediaSource();
-        await FAR._videoLoadFull(item, side);
-        return;
-    }
-
-    // Воспроизводим
+    // ============================================================
+    // Пробуем автоплей. Если браузер блокирует — показываем
+    // оверлей «нажмите, чтобы воспроизвести».
+    // ============================================================
     try {
         await FAR._videoEl.play();
         loading.classList.add('hidden');
@@ -633,21 +592,37 @@ FAR.videoToggleFullscreen = function () {
 };
 
 // ============================================================
-// Статус загрузки в футере
+// Статус в футере: сколько секунд буферизовано из общего.
+//
+// При прямом URL через Range байтовый прогресс неизвестен
+// (браузер сам решает, сколько качать). Но буферизованное
+// ВРЕМЯ доступно через video.buffered — этого достаточно,
+// чтобы показать «буферизовано 1:23 / 5:00 (28%)».
 // ============================================================
-
 FAR._videoUpdateLoadStatus = function () {
     const el = document.getElementById('videoLoadStatus');
     if (!el) return;
-    if (!FAR._videoTotalBytes) {
-        el.textContent = '';
-        return;
-    }
-    const pct = FAR._videoTotalBytes > 0
-        ? Math.round((FAR._videoLoadedBytes / FAR._videoTotalBytes) * 100)
-        : 0;
-    el.textContent = FAR.formatSize(FAR._videoLoadedBytes) + ' / ' +
-                     FAR.formatSize(FAR._videoTotalBytes) + ' (' + pct + '%)';
+
+    const v = FAR._videoEl;
+    if (!v) { el.textContent = ''; return; }
+
+    const dur = v.duration;
+    if (!isFinite(dur) || dur <= 0) { el.textContent = ''; return; }
+
+    let bufEnd = 0;
+    try {
+        for (let i = 0; i < v.buffered.length; i++) {
+            bufEnd = Math.max(bufEnd, v.buffered.end(i));
+        }
+    } catch (e) { /* ignore */ }
+
+    const pct = Math.round((bufEnd / dur) * 100);
+    const sizeStr = FAR._videoFileSize > 0
+        ? ' • ' + FAR.formatSize(FAR._videoFileSize) : '';
+
+    el.textContent = 'буферизовано: ' + FAR._videoFormatTime(bufEnd) +
+        ' / ' + FAR._videoFormatTime(dur) +
+        ' (' + pct + '%)' + sizeStr;
 };
 
 FAR._videoShowBadge = function (text, show) {
@@ -853,7 +828,7 @@ FAR._videoOnProgress = function () {
     if (!v || !v.buffered || v.buffered.length === 0) return;
     if (!isFinite(v.duration) || v.duration <= 0) return;
 
-    // Показываем буферизованный диапазон
+    // Показываем буферизованный диапазон на полосе
     let bufEnd = 0;
     for (let i = 0; i < v.buffered.length; i++) {
         if (v.buffered.start(i) <= v.currentTime && v.buffered.end(i) >= v.currentTime) {
@@ -867,6 +842,9 @@ FAR._videoOnProgress = function () {
     if (buffered) {
         buffered.style.width = ((bufEnd / v.duration) * 100) + '%';
     }
+
+    // Обновляем строку статуса в футере
+    FAR._videoUpdateLoadStatus();
 };
 
 FAR._videoFormatTime = function (sec) {
