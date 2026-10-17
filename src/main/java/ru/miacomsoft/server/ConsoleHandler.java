@@ -80,7 +80,8 @@ public class ConsoleHandler implements HttpHandler {
                 }
             }
         } finally {
-            session.detachSse();
+            // ВАЖНО: передаем conn, чтобы отвязать именно его
+            session.detachSse(conn);
             conn.close();
         }
     }

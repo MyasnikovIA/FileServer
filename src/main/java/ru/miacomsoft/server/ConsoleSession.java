@@ -23,11 +23,22 @@ public class ConsoleSession {
     }
 
     public void attachSse(SseConnection conn) {
-        synchronized (lock) { this.sse = conn; }
+        synchronized (lock) {
+            // Если старое соединение зависло, закрываем его, чтобы не было утечек
+            if (this.sse != null && this.sse != conn) {
+                try { this.sse.close(); } catch (Exception e) {}
+            }
+            this.sse = conn;
+        }
     }
 
-    public void detachSse() {
-        synchronized (lock) { this.sse = null; }
+    // Теперь detachSse принимает соединение, чтобы старое не сбрасывало новое
+    public void detachSse(SseConnection conn) {
+        synchronized (lock) {
+            if (this.sse == conn) {
+                this.sse = null;
+            }
+        }
     }
 
     public boolean isClosed() { return closed; }
@@ -77,8 +88,6 @@ public class ConsoleSession {
             try {
                 Map<String, String> env = new HashMap<>(System.getenv());
 
-                // ВАЖНО: Говорим терминалу, что он поддерживает 256 цветов и псевдографику.
-                // Это чинит отрисовку mc, htop, vim и т.д.
                 if (!isWindows) {
                     env.put("TERM", "xterm-256color");
                     env.put("LANG", "C.UTF-8");
@@ -87,7 +96,7 @@ public class ConsoleSession {
 
                 PtyProcessBuilder pb = new PtyProcessBuilder(cmd)
                         .setEnvironment(env)
-                        .setInitialColumns(80) // Начальный размер, потом JS пришлет правильный
+                        .setInitialColumns(80)
                         .setInitialRows(24);
 
                 if (cwd != null && !cwd.isEmpty()) {
@@ -98,11 +107,13 @@ public class ConsoleSession {
                 process = pb.start();
 
                 Thread readThread = new Thread(() -> {
-                    byte[] buf = new byte[4096];
-                    try (InputStream is = process.getInputStream()) {
+                    // ИСПОЛЬЗУЕМ InputStreamReader - он не разрывает UTF-8 символы,
+                    // а собирает их целиком, даже если они пришли разными кусками.
+                    try (Reader reader = new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)) {
+                        char[] buf = new char[4096];
                         int n;
-                        while ((n = is.read(buf)) > 0) {
-                            String text = new String(buf, 0, n, StandardCharsets.UTF_8);
+                        while ((n = reader.read(buf)) > 0) {
+                            String text = new String(buf, 0, n);
                             sendOutput(text);
                         }
                     } catch (IOException e) {

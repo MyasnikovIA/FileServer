@@ -13,7 +13,6 @@ FAR._loadXterm = function() {
     if (FAR._xtermLoadingPromise) return FAR._xtermLoadingPromise;
 
     FAR._xtermLoadingPromise = new Promise(function(resolve, reject) {
-        // Подключаем CSS
         if (!document.getElementById('xterm-css')) {
             const link = document.createElement('link');
             link.id = 'xterm-css';
@@ -26,8 +25,6 @@ FAR._loadXterm = function() {
             return new Promise((res, rej) => {
                 const s = document.createElement('script');
                 s.src = src;
-
-                // Временно прячем module/exports для UMD
                 const savedExports = window.exports;
                 const savedModule = window.module;
                 try { window.exports = undefined; window.module = undefined; } catch(e) {}
@@ -44,7 +41,6 @@ FAR._loadXterm = function() {
             });
         };
 
-        // Загружаем СТРОГО ПОСЛЕДОВАТЕЛЬНО: сначала xterm.js, затем плагин.
         loadScript('https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js')
             .then(() => {
                 if (!window.Terminal) throw new Error('xterm.js загружен, но window.Terminal не создан');
@@ -129,6 +125,8 @@ FAR._createConsole = function (hostEl, opts) {
     const S = { es: null, connected: false, destroyed: false };
     let term = null;
     let fitAddon = null;
+    let resizeObserver = null;
+    let resizeTimer = null;
 
     function setStatus(text, cls) {
         elStatusTxt.textContent = text || '';
@@ -160,7 +158,6 @@ FAR._createConsole = function (hostEl, opts) {
 
         term.open(elTermHost);
 
-        // Даем DOM время отрисоваться и высчитываем точный размер
         setTimeout(() => {
             fitAddon.fit();
             term.focus();
@@ -171,7 +168,6 @@ FAR._createConsole = function (hostEl, opts) {
         const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
         const token = FAR.authToken || FAR.readCookieToken();
 
-        // Отправляем каждое нажатие клавиши
         term.onData(async (data) => {
             if (!S.connected) return;
             try {
@@ -186,7 +182,6 @@ FAR._createConsole = function (hostEl, opts) {
             } catch (e) {}
         });
 
-        // Отправляем размер при каждом изменении окна
         term.onResize(async (size) => {
             try {
                 await fetch(baseUrl + '/api/console/resize', {
@@ -199,6 +194,28 @@ FAR._createConsole = function (hostEl, opts) {
                 });
             } catch (e) {}
         });
+
+        // ============================================================
+        // ВАЖНО: при клике в любое место консоли возвращаем фокус
+        // терминалу. Иначе после клика по панели инструментов
+        // пропадает ввод с клавиатуры.
+        // ============================================================
+        hostEl.addEventListener('mousedown', function (e) {
+            if (term) {
+                // Если кликнули не по кнопке, переводим фокус на терминал
+                if (!e.target.closest('button')) {
+                    setTimeout(() => term.focus(), 10);
+                }
+            }
+        });
+
+        resizeObserver = new ResizeObserver(() => {
+            if (resizeTimer) clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                try { fitAddon.fit(); } catch (e) {}
+            }, 100);
+        });
+        resizeObserver.observe(elTermHost);
     }
 
     function connect() {
@@ -288,6 +305,8 @@ FAR._createConsole = function (hostEl, opts) {
         getState: function () { return S; },
         destroy: function () {
             S.destroyed = true;
+            if (resizeTimer) clearTimeout(resizeTimer);
+            if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
             if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
             if (term) { try { term.dispose(); } catch (e) {} term = null; }
         }
