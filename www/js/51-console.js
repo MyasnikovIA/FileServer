@@ -13,11 +13,12 @@ FAR._loadXterm = function() {
     if (FAR._xtermLoadingPromise) return FAR._xtermLoadingPromise;
 
     FAR._xtermLoadingPromise = new Promise(function(resolve, reject) {
+        // Подключаем локальный CSS из lib/xterm/xterm.css
         if (!document.getElementById('xterm-css')) {
             const link = document.createElement('link');
             link.id = 'xterm-css';
             link.rel = 'stylesheet';
-            link.href = 'https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css';
+            link.href = 'lib/xterm/xterm.css';
             document.head.appendChild(link);
         }
 
@@ -25,6 +26,8 @@ FAR._loadXterm = function() {
             return new Promise((res, rej) => {
                 const s = document.createElement('script');
                 s.src = src;
+
+                // Временно прячем module/exports для корректной работы UMD-обертки xterm.js
                 const savedExports = window.exports;
                 const savedModule = window.module;
                 try { window.exports = undefined; window.module = undefined; } catch(e) {}
@@ -41,10 +44,11 @@ FAR._loadXterm = function() {
             });
         };
 
-        loadScript('https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js')
+        // Загружаем СТРОГО ПОСЛЕДОВАТЕЛЬНО локальные файлы
+        loadScript('lib/xterm/xterm.js')
             .then(() => {
                 if (!window.Terminal) throw new Error('xterm.js загружен, но window.Terminal не создан');
-                return loadScript('https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js');
+                return loadScript('lib/xterm/xterm-addon-fit.js');
             })
             .then(() => {
                 if (!window.FitAddon) throw new Error('xterm-addon-fit.js загружен, но window.FitAddon не создан');
@@ -158,6 +162,7 @@ FAR._createConsole = function (hostEl, opts) {
 
         term.open(elTermHost);
 
+        // Даем DOM время отрисоваться и высчитываем точный размер
         setTimeout(() => {
             fitAddon.fit();
             term.focus();
@@ -168,6 +173,7 @@ FAR._createConsole = function (hostEl, opts) {
         const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
         const token = FAR.authToken || FAR.readCookieToken();
 
+        // Отправляем каждое нажатие клавиши
         term.onData(async (data) => {
             if (!S.connected) return;
             try {
@@ -182,6 +188,7 @@ FAR._createConsole = function (hostEl, opts) {
             } catch (e) {}
         });
 
+        // Отправляем размер при каждом изменении окна
         term.onResize(async (size) => {
             try {
                 await fetch(baseUrl + '/api/console/resize', {
@@ -195,20 +202,14 @@ FAR._createConsole = function (hostEl, opts) {
             } catch (e) {}
         });
 
-        // ============================================================
-        // ВАЖНО: при клике в любое место консоли возвращаем фокус
-        // терминалу. Иначе после клика по панели инструментов
-        // пропадает ввод с клавиатуры.
-        // ============================================================
+        // Возвращаем фокус при клике мимо терминала
         hostEl.addEventListener('mousedown', function (e) {
-            if (term) {
-                // Если кликнули не по кнопке, переводим фокус на терминал
-                if (!e.target.closest('button')) {
-                    setTimeout(() => term.focus(), 10);
-                }
+            if (term && !e.target.closest('button')) {
+                setTimeout(() => term.focus(), 10);
             }
         });
 
+        // ResizeObserver: следим за изменением размера контейнера
         resizeObserver = new ResizeObserver(() => {
             if (resizeTimer) clearTimeout(resizeTimer);
             resizeTimer = setTimeout(() => {
