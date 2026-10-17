@@ -1,22 +1,18 @@
 package ru.miacomsoft.server;
 
+import com.pty4j.PtyProcess;
+import com.pty4j.PtyProcessBuilder;
+import com.pty4j.WinSize;
 import org.json.JSONObject;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.TimeUnit;
 
-/**
- * Одна консольная сессия (на пользователя).
- *
- * Команды выполняются в отдельном потоке; вывод строк
- * построчно уходит подписанному SSE-соединению.
- */
 public class ConsoleSession {
 
     public final String key;
     private SseConnection sse;
-    private Process currentProcess;
+    private PtyProcess process;
     private volatile boolean closed = false;
     private final Object lock = new Object();
 
@@ -36,32 +32,25 @@ public class ConsoleSession {
 
     public void close() {
         closed = true;
-        Process p;
-        synchronized (lock) { p = currentProcess; }
-        if (p != null && p.isAlive()) p.destroyForcibly();
+        synchronized (lock) {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
     }
-
-    // ---------- Отправка в SSE ----------
 
     private void sendEvent(String event, String data) {
         SseConnection s;
         synchronized (lock) { s = sse; }
         if (s == null) return;
         try { s.send(event, data); }
-        catch (IOException e) { /* соединение упало — ничего не делаем */ }
+        catch (IOException e) { /* соединение упало */ }
     }
 
-    private void sendOutput(String stream, String text) {
+    private void sendOutput(String text) {
         JSONObject o = new JSONObject();
-        o.put("stream", stream);
         o.put("text", text);
         sendEvent("output", o.toString());
-    }
-
-    private void sendExit(int code) {
-        JSONObject o = new JSONObject();
-        o.put("code", code);
-        sendEvent("exit", o.toString());
     }
 
     private void sendError(String msg) {
@@ -70,95 +59,74 @@ public class ConsoleSession {
         sendEvent("error", o.toString());
     }
 
-    // ---------- Выполнение ----------
-
-    public void execute(String command, String cwd, String shell, long timeoutSec, long maxBytes) {
-        // Убиваем предыдущий процесс, если он ещё жив
+    public void startShell(String cwd, String shell) {
         synchronized (lock) {
-            if (currentProcess != null && currentProcess.isAlive()) {
-                currentProcess.destroyForcibly();
-            }
-        }
+            if (process != null && process.isAlive()) return;
 
-        Thread t = new Thread(
-                () -> runCommand(command, cwd, shell, timeoutSec, maxBytes),
-                "ConsoleExec-" + key);
-        t.setDaemon(true);
-        t.start();
-    }
+            String os = System.getProperty("os.name", "").toLowerCase();
+            boolean isWindows = os.contains("win");
 
-    private void runCommand(String command, String cwd, String shell, long timeoutSec, long maxBytes) {
+            String realShell = (shell == null || shell.isEmpty())
+                    ? (isWindows ? "cmd.exe" : "bash")
+                    : shell;
 
-        // Отправляем эхо команды — с префиксом $
-        sendOutput("system", "$ " + command + "\n");
+            String[] cmd = { realShell };
 
-        // Параметры запуска
-        ProcessBuilder pb;
-        String os = System.getProperty("os.name", "").toLowerCase();
-        boolean isWindows = os.contains("win");
+            try {
+                PtyProcessBuilder pb = new PtyProcessBuilder(cmd)
+                        .setEnvironment(System.getenv())
+                        .setInitialColumns(120)
+                        .setInitialRows(30);
 
-        String realShell = (shell == null || shell.isEmpty())
-                ? (isWindows ? "cmd.exe" : "bash")
-                : shell;
-
-        if (isWindows && realShell.equalsIgnoreCase("cmd.exe")) {
-            pb = new ProcessBuilder(realShell, "/c", command);
-        } else {
-            pb = new ProcessBuilder(realShell, "-c", command);
-        }
-
-        if (cwd != null && !cwd.isEmpty()) {
-            File dir = new File(cwd);
-            if (dir.isDirectory()) pb.directory(dir);
-        }
-        pb.redirectErrorStream(false);
-
-        try {
-            Process proc = pb.start();
-            synchronized (lock) { currentProcess = proc; }
-
-            Thread outT = streamReader(proc.getInputStream(), "stdout", maxBytes);
-            Thread errT = streamReader(proc.getErrorStream(), "stderr", maxBytes);
-            outT.setDaemon(true);
-            errT.setDaemon(true);
-            outT.start();
-            errT.start();
-
-            boolean finished = proc.waitFor(timeoutSec, TimeUnit.SECONDS);
-            if (!finished) {
-                proc.destroyForcibly();
-                sendError("Превышен таймаут (" + timeoutSec + " сек)");
-            }
-
-            try { outT.join(2000); } catch (InterruptedException ignored) {}
-            try { errT.join(2000); } catch (InterruptedException ignored) {}
-
-            int code = finished ? proc.exitValue() : -1;
-            sendExit(code);
-
-            synchronized (lock) { currentProcess = null; }
-
-        } catch (Exception e) {
-            sendError("Ошибка запуска: " + e.getMessage());
-            sendExit(-1);
-        }
-    }
-
-    private Thread streamReader(InputStream is, String streamName, long maxBytes) {
-        return new Thread(() -> {
-            long total = 0;
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = br.readLine()) != null) {
-                    sendOutput(streamName, line + "\n");
-                    total += line.length() + 1;
-                    if (total > maxBytes) {
-                        sendError("Превышен лимит вывода (" + maxBytes + " байт)");
-                        break;
-                    }
+                if (cwd != null && !cwd.isEmpty()) {
+                    File dir = new File(cwd);
+                    if (dir.isDirectory()) pb.setDirectory(cwd);
                 }
-            } catch (IOException ignored) {}
-        });
+
+                process = pb.start();
+
+                // Поток чтения вывода (stdout/stderr)
+                Thread readThread = new Thread(() -> {
+                    byte[] buf = new byte[4096];
+                    try (InputStream is = process.getInputStream()) {
+                        int n;
+                        while ((n = is.read(buf)) > 0) {
+                            String text = new String(buf, 0, n, StandardCharsets.UTF_8);
+                            sendOutput(text);
+                        }
+                    } catch (IOException e) {
+                        // ignore
+                    }
+                });
+                readThread.setDaemon(true);
+                readThread.start();
+
+            } catch (Exception e) {
+                sendError("Ошибка запуска оболочки: " + e.getMessage());
+            }
+        }
+    }
+
+    public void writeInput(String data) {
+        synchronized (lock) {
+            if (process == null || !process.isAlive()) return;
+            try {
+                OutputStream os = process.getOutputStream();
+                os.write(data.getBytes(StandardCharsets.UTF_8));
+                os.flush();
+            } catch (IOException e) {
+                sendError("Ошибка записи: " + e.getMessage());
+            }
+        }
+    }
+
+    public void resize(int cols, int rows) {
+        synchronized (lock) {
+            if (process != null && process.isAlive()) {
+                try {
+                    process.setWinSize(new WinSize(cols, rows));
+                } catch (Exception ignored) {}
+            }
+        }
     }
 }

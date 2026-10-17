@@ -3,24 +3,16 @@ package ru.miacomsoft.server;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Менеджер консольных сессий.
- * Ключ — имя пользователя. Один пользователь = одна сессия.
- */
 public class ConsoleService {
 
     private final Map<String, ConsoleSession> sessions = new ConcurrentHashMap<>();
 
     private final String defaultShell;
     private final String defaultCwd;
-    private final long timeoutSec;
-    private final long maxOutputBytes;
 
     public ConsoleService(String shell, String cwd, long timeoutSec, long maxOutputBytes) {
         this.defaultShell = shell;
         this.defaultCwd = cwd;
-        this.timeoutSec = timeoutSec;
-        this.maxOutputBytes = maxOutputBytes;
     }
 
     public ConsoleSession getOrCreate(String key) {
@@ -36,8 +28,18 @@ public class ConsoleService {
         if (s != null) s.close();
     }
 
-    public void execute(String key, String command) {
+    public void startShell(String key) {
         ConsoleSession s = getOrCreate(key);
-        s.execute(command, defaultCwd, defaultShell, timeoutSec, maxOutputBytes);
+        s.startShell(defaultCwd, defaultShell);
+    }
+
+    public void writeInput(String key, String data) {
+        ConsoleSession s = get(key);
+        if (s != null) s.writeInput(data);
+    }
+
+    public void resize(String key, int cols, int rows) {
+        ConsoleSession s = get(key);
+        if (s != null) s.resize(cols, rows);
     }
 }

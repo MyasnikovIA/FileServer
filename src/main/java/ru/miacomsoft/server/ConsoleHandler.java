@@ -9,15 +9,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
-/**
- * HTTP-обработчик модуля Console.
- *
- *   GET  /api/console/events?token=…   — SSE-поток вывода
- *   POST /api/console/exec             — запуск команды
- *                                        { "command": "ls -la" }
- *
- * Права: только пользователи с console:true в config.json.
- */
 public class ConsoleHandler implements HttpHandler {
 
     @Override
@@ -27,16 +18,27 @@ public class ConsoleHandler implements HttpHandler {
         String path = ex.getRequestURI().getPath();
         if ("/api/console/events".equals(path)) {
             handleEvents(ex);
-        } else if ("/api/console/exec".equals(path)) {
-            handleExec(ex);
+        } else if ("/api/console/input".equals(path)) {
+            handleInput(ex);
+        } else if ("/api/console/resize".equals(path)) {
+            handleResize(ex);
         } else {
             FileServer.sendError(ex, 404, "Unknown console endpoint: " + path);
         }
     }
 
-    // ============================================================
-    // SSE: /api/console/events
-    // ============================================================
+    private AuthService.Session auth(HttpExchange ex) throws IOException {
+        AuthService.Session s = FileServer.auth().authenticate(ex);
+        if (s == null || s.anonymous || s.user == null) {
+            FileServer.sendError(ex, 401, "Unauthorized");
+            return null;
+        }
+        if (!s.user.consoleEnabled) {
+            FileServer.sendError(ex, 403, "Console is not enabled for this user");
+            return null;
+        }
+        return s;
+    }
 
     private void handleEvents(HttpExchange ex) throws IOException {
         if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
@@ -44,15 +46,8 @@ public class ConsoleHandler implements HttpHandler {
             return;
         }
 
-        AuthService.Session s = FileServer.auth().authenticate(ex);
-        if (s == null || s.anonymous || s.user == null) {
-            FileServer.sendError(ex, 401, "Unauthorized");
-            return;
-        }
-        if (!s.user.consoleEnabled) {
-            FileServer.sendError(ex, 403, "Console is not enabled for this user");
-            return;
-        }
+        AuthService.Session s = auth(ex);
+        if (s == null) return;
 
         FileServer.handleCors(ex);
         ex.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
@@ -65,16 +60,15 @@ public class ConsoleHandler implements HttpHandler {
         String key = s.username;
 
         ConsoleSession session = FileServer.console().getOrCreate(key);
+        FileServer.console().startShell(key);
         session.attachSse(conn);
 
         try {
-            // Приветствие
             JSONObject ready = new JSONObject();
             ready.put("user", key);
             ready.put("cwd", System.getProperty("user.dir"));
             conn.send("ready", ready.toString());
 
-            // Держим соединение; клиент отвалится — send кинет IOException
             while (!session.isClosed()) {
                 try { Thread.sleep(15000); }
                 catch (InterruptedException ie) { break; }
@@ -91,61 +85,65 @@ public class ConsoleHandler implements HttpHandler {
         }
     }
 
-    // ============================================================
-    // POST: /api/console/exec
-    // ============================================================
-
-    private void handleExec(HttpExchange ex) throws IOException {
+    private void handleInput(HttpExchange ex) throws IOException {
         if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
             FileServer.sendError(ex, 405, "Method not allowed");
             return;
         }
+        AuthService.Session s = auth(ex);
+        if (s == null) return;
 
-        AuthService.Session s = FileServer.auth().authenticate(ex);
-        if (s == null || s.anonymous || s.user == null) {
-            FileServer.sendError(ex, 401, "Unauthorized");
-            return;
-        }
-        if (!s.user.consoleEnabled) {
-            FileServer.sendError(ex, 403, "Console is not enabled for this user");
-            return;
-        }
-
-        // Тело запроса
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         try (InputStream is = ex.getRequestBody()) {
             byte[] tmp = new byte[4096];
             int n;
             while ((n = is.read(tmp)) > 0) buf.write(tmp, 0, n);
         }
-
         String body = new String(buf.toByteArray(), StandardCharsets.UTF_8).trim();
-        String command = "";
-
+        String data = "";
         if (body.startsWith("{")) {
             try {
                 JSONObject o = new JSONObject(body);
-                command = o.optString("command", "").trim();
-            } catch (Exception e) {
-                FileServer.sendError(ex, 400, "Invalid JSON");
-                return;
-            }
+                data = o.optString("data", "");
+            } catch (Exception e) { /* ignore */ }
         } else {
-            command = body;
+            data = body;
         }
 
-        if (command.isEmpty()) {
-            FileServer.sendError(ex, 400, "command is required");
-            return;
-        }
-
-        // Запускаем асинхронно — ответ отдаётся сразу,
-        // а вывод уйдёт в SSE-поток.
-        FileServer.console().execute(s.username, command);
+        FileServer.console().writeInput(s.username, data);
 
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
-        ok.put("queued", command);
+        FileServer.sendJson(ex, 200, ok.toString());
+    }
+
+    private void handleResize(HttpExchange ex) throws IOException {
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            FileServer.sendError(ex, 405, "Method not allowed");
+            return;
+        }
+        AuthService.Session s = auth(ex);
+        if (s == null) return;
+
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        try (InputStream is = ex.getRequestBody()) {
+            byte[] tmp = new byte[4096];
+            int n;
+            while ((n = is.read(tmp)) > 0) buf.write(tmp, 0, n);
+        }
+        String body = new String(buf.toByteArray(), StandardCharsets.UTF_8).trim();
+        int cols = 80, rows = 24;
+        if (body.startsWith("{")) {
+            try {
+                JSONObject o = new JSONObject(body);
+                cols = o.optInt("cols", 80);
+                rows = o.optInt("rows", 24);
+            } catch (Exception e) { /* ignore */ }
+        }
+        FileServer.console().resize(s.username, cols, rows);
+
+        JSONObject ok = new JSONObject();
+        ok.put("ok", true);
         FileServer.sendJson(ex, 200, ok.toString());
     }
 }

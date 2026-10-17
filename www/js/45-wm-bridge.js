@@ -3211,6 +3211,9 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
 // ============================================================
 // Console (WM-окно)
 // ============================================================
+// ============================================================
+// Console (WM-окно)
+// ============================================================
 
 FAR.WM._mountConsoleViewer = async function (win, props) {
     win.el.querySelector('.wm-title-text').textContent = '🖥 Console';
@@ -3228,10 +3231,11 @@ FAR.WM._mountConsoleViewer = async function (win, props) {
 
     win.props._consoleApi = FAR._createConsole(win.bodyEl, {});
 
+    // Фокусируем скрытый textarea xterm, чтобы клавиши сразу шли в терминал
     setTimeout(function () {
-        const inp = win.bodyEl.querySelector('.console-input');
-        if (inp) inp.focus();
-    }, 50);
+        const ta = win.bodyEl.querySelector('.xterm-helper-textarea');
+        if (ta) try { ta.focus(); } catch (e) {}
+    }, 100);
 };
 
 
