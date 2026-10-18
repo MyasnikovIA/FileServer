@@ -35,7 +35,7 @@ FAR.saveConnToLS = function (cfg) {
     // Токен НЕ сохраняем — он короткоживущий, при перезапуске
     // клиент заново вызовет /api/login.
     const safe = {
-        url:  cfg.url,
+        url:  FAR.normalizeServerUrl(cfg.url),
         user: cfg.user || '',
         pass: cfg.pass || ''
     };
@@ -62,14 +62,33 @@ FAR.ensureDb = function () {
  *
  * @param {Object} cfg — { url, user, pass }
  * @returns {Promise<{db: FsClient, info: Object, fullUrl: string, token: string}>}
+ *
+ * ВАЖНО: URL в cfg может прийти БЕЗ схемы — пользователь вводит
+ * "www.example.com:8080" вместо "http://www.example.com:8080".
+ * Мы нормализуем его здесь и МУТИРУЕМ cfg.url, чтобы вызывающий
+ * код, который после await использует cfg (applyConnectionToSide,
+ * saveSideConnToLS, saveConnToLS), сохранил уже корректный URL.
+ *
+ * Без этого fetch() падает:
+ *   "URL scheme 'www.example.com' is not supported"
  */
 FAR.connectToDb = async function (cfg) {
     if (typeof FAR.FsClient !== 'function') {
         throw new Error('FsClient не загружен (js/04a-fs-client.js)');
     }
 
-    const baseUrl = String(cfg.url || '').replace(/\/+$/, '');
+    // ---- НОРМАЛИЗАЦИЯ URL ----
+    // Единая точка: см. FAR.normalizeServerUrl в 03-utils.js.
+    //   "www.host:8080"     → "http://www.host:8080"
+    //   "//host:8080"       → "http://host:8080"
+    //   "http://host:8080/" → "http://host:8080"
+    //   "https://host"      → "https://host"
+    const baseUrl = FAR.normalizeServerUrl(cfg && cfg.url);
     if (!baseUrl) throw new Error('Не указан адрес FileServer');
+
+    // Мутируем cfg — все дальнейшие вызовы (applyConnectionToSide,
+    // saveSideConnToLS, saveConnToLS, currentConn) увидят корректный URL.
+    cfg.url = baseUrl;
 
     let token = '';
 

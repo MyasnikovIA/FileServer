@@ -61,6 +61,43 @@ FAR.normPath = function(p) {
 };
 
 /**
+ * Нормализует адрес FileServer.
+ *
+ * Пользователь может ввести адрес без схемы:
+ *   • "www.example.com:8080"   → "http://www.example.com:8080"
+ *   • "example.com"            → "http://example.com"
+ *   • "//example.com:8080"     → "http://example.com:8080"   (protocol-relative)
+ *   • "http://example.com/"    → "http://example.com"
+ *   • "https://example.com"    → "https://example.com"       (без изменений)
+ *
+ * Без этого fetch() падает с ошибкой:
+ *   "URL scheme 'www.example.com' is not supported"
+ *
+ * Используется:
+ *   • в FAR.connectToDb  — единая точка нормализации при подключении;
+ *   • (опционально) в UI  — при показе/сохранении адреса.
+ *
+ * @param {string} raw
+ * @returns {string} нормализованный URL или '' для пустого входа
+ */
+FAR.normalizeServerUrl = function (raw) {
+    let s = String(raw || '').trim();
+    if (!s) return '';
+
+    // protocol-relative: //host → http://host
+    if (s.startsWith('//')) {
+        s = 'http:' + s;
+    }
+    // схема уже есть (http://, https://, ftp://, ws:// и т.п.) — не трогаем
+    else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+        s = 'http://' + s;
+    }
+
+    // убираем хвостовые слэши (http://host:8080/ → http://host:8080)
+    return s.replace(/\/+$/, '');
+};
+
+/**
  * Загружает внешний скрипт ровно один раз.
  * Возвращает Promise, который резолвится после загрузки.
  * Повторные вызовы с тем же src возвращают тот же Promise.
@@ -101,8 +138,6 @@ FAR.saveUiState = function() {
             rightPath: FAR.rightPath,
             leftCursor: FAR.leftCursor,
             rightCursor: FAR.rightCursor,
-            // Запоминаем и имя файла — на случай, если порядок
-            // элементов поменялся (например, после удаления/создания)
             leftFile: FAR._getFileAt(FAR.leftFiles, FAR.leftCursor),
             rightFile: FAR._getFileAt(FAR.rightFiles, FAR.rightCursor)
         };
@@ -130,7 +165,6 @@ FAR.loadUiState = function() {
 
 /**
  * Возвращает имя файла в списке по индексу или '' если индекса нет.
- * Нужно, чтобы запомнить не только позицию, но и имя.
  */
 FAR._getFileAt = function(list, idx) {
     if (!list || idx === null || idx === undefined) return '';
@@ -142,8 +176,6 @@ FAR._getFileAt = function(list, idx) {
 
 /**
  * Восстанавливает состояние панелей из localStorage.
- * Вызывается после того, как загружены файлы (FAR.loadFiles).
- * Возвращает true, если что-то было восстановлено.
  */
 FAR.restoreUiState = function() {
     const st = FAR.loadUiState();
@@ -159,7 +191,6 @@ FAR.restoreUiState = function() {
         }
     }
 
-    // Восстанавливаем пути и (опционально) грузим их
     const restorePromises = [];
     if (typeof st.leftPath === 'string' && st.leftPath) {
         FAR.side.left.path = st.leftPath;
@@ -186,10 +217,6 @@ FAR.restoreUiState = function() {
     });
 };
 
-/**
- * Ставит курсор на панели.
- * Приоритет: файл с заданным именем; если такого нет — индекс.
- */
 FAR._restoreCursor = function(side, fileName, cursorIdx) {
     const files = side === 'left' ? FAR.leftFiles : FAR.rightFiles;
     let idx = -1;
@@ -230,10 +257,6 @@ FAR._restoreCursor = function(side, fileName, cursorIdx) {
 
 /**
  * Сохраняет Blob как файл через временный <a download>.
- * Единая точка для всех скачиваний в проекте.
- *
- * @param {Blob} blob         — данные файла
- * @param {string} fileName   — имя файла для сохранения
  */
 FAR.saveBlobAs = function (blob, fileName) {
     if (!(blob instanceof Blob)) {
@@ -252,8 +275,6 @@ FAR.saveBlobAs = function (blob, fileName) {
     document.body.appendChild(a);
     a.click();
 
-    // Убираем <a> и освобождаем URL асинхронно, чтобы
-    // Firefox/Chrome гарантированно успели начать скачивание.
     setTimeout(function () {
         try { document.body.removeChild(a); } catch (e) {}
         try { URL.revokeObjectURL(url); } catch (e) {}
@@ -262,12 +283,9 @@ FAR.saveBlobAs = function (blob, fileName) {
 
 /**
  * Формирует человекочитаемую метку подключения:
- *   "admin@127.0.0.1:8080"      — если указан пользователь
- *   "anonymous@127.0.0.1:8080"  — если аноним
- *   "— нет подключения —"       — если conn нет
- *
- * @param {Object} conn — { url, user } из FAR.side[side].conn
- * @returns {string}
+ *   "admin@127.0.0.1:8080"
+ *   "anonymous@127.0.0.1:8080"
+ *   "— нет подключения —"
  */
 FAR.connLabel = function (conn) {
     if (!conn || !conn.url) return '— нет подключения —';
@@ -278,18 +296,12 @@ FAR.connLabel = function (conn) {
 
 /**
  * Определяет MIME-тип по имени/расширению файла.
- * Используется как fallback, когда сервер вернул
- * application/octet-stream, но по расширению тип очевиден.
- *
- * @param {string} name — имя файла ("photo.jpg", "video.mp4")
- * @returns {string} MIME-тип или "" если не удалось определить
  */
 FAR.guessMimeByName = function (name) {
     if (!name) return '';
     const ext = String(name).split('.').pop().toLowerCase();
 
     const map = {
-        // Изображения
         'png':   'image/png',
         'jpg':   'image/jpeg',
         'jpeg':  'image/jpeg',
@@ -302,7 +314,6 @@ FAR.guessMimeByName = function (name) {
         'tiff':  'image/tiff',
         'avif':  'image/avif',
 
-        // Аудио
         'mp3':   'audio/mpeg',
         'm4a':   'audio/mp4',
         'aac':   'audio/aac',
@@ -312,7 +323,6 @@ FAR.guessMimeByName = function (name) {
         'wav':   'audio/wav',
         'flac':  'audio/flac',
 
-        // Видео
         'mp4':   'video/mp4',
         'm4v':   'video/mp4',
         'webm':  'video/webm',
@@ -322,7 +332,6 @@ FAR.guessMimeByName = function (name) {
         'avi':   'video/x-msvideo',
         'ts':    'video/mp2t',
 
-        // Документы
         'pdf':   'application/pdf',
         'zip':   'application/zip',
         'rar':   'application/vnd.rar',
@@ -330,7 +339,6 @@ FAR.guessMimeByName = function (name) {
         'tar':   'application/x-tar',
         'gz':    'application/gzip',
 
-        // Текст / Web
         'html':  'text/html; charset=utf-8',
         'htm':   'text/html; charset=utf-8',
         'css':   'text/css; charset=utf-8',
@@ -347,7 +355,6 @@ FAR.guessMimeByName = function (name) {
         'ini':   'text/plain; charset=utf-8',
         'cfg':   'text/plain; charset=utf-8',
 
-        // Шрифты
         'woff':  'font/woff',
         'woff2': 'font/woff2',
         'ttf':   'font/ttf',
@@ -356,22 +363,13 @@ FAR.guessMimeByName = function (name) {
 
     return map[ext] || '';
 };
+
 // ============================================================
 // Прямые ссылки на файлы
 // ============================================================
 
 /**
  * Строит прямой URL к файлу из share.
- *
- *   item.path = "Documents/Games/SNES/Worms (U).smc"
- *   → http://host:8080/Documents/Games/SNES/Worms%20(U).smc
- *
- * Слэши остаются разделителями, каждый сегмент кодируется
- * через encodeURIComponent (пробелы, кириллица, спецсимволы).
- *
- * @param {Object} item   — элемент fileIndex (path уже включает share)
- * @param {string} [side] — 'left' | 'right' (по умолчанию активная)
- * @returns {string|null}
  */
 FAR.buildDirectFileUrl = function (item, side) {
     if (!item || !item.path) return null;
@@ -395,15 +393,6 @@ FAR.buildDirectFileUrl = function (item, side) {
 
 /**
  * Открывает файл в новом окне браузера.
- *
- * Авторизация:
- *   • cookie filebd_token — отправляется браузером автоматически
- *     (ставится сервером при /api/login и дублируется в JS);
- *   • перед открытием делается HEAD с Bearer-токеном, чтобы
- *     не показывать пользователю 401/403 в новой вкладке.
- *
- * @param {Object} item
- * @param {string} [side]
  */
 FAR.openFileInNewWindow = async function (item, side) {
     if (!item || item.isFolder) {
@@ -417,8 +406,6 @@ FAR.openFileInNewWindow = async function (item, side) {
         return;
     }
 
-    // ---- Проверка доступа ДО открытия ----
-    // fetch-обёртка (04b-auth-token.js) подставит Bearer и cookie.
     try {
         const res = await fetch(url, { method: 'HEAD' });
 
@@ -440,13 +427,9 @@ FAR.openFileInNewWindow = async function (item, side) {
             return;
         }
     } catch (e) {
-        // Сеть/CORS — не блокируем открытие, браузер сам покажет
         console.warn('[openFileInNewWindow] HEAD check failed:', e);
     }
 
-    // ---- Открываем новую вкладку ----
-    // 'noopener' — не даём новой вкладке доступ к window.opener.
-    // Cookie уйдёт автоматически (same-site).
     const win = window.open(url, '_blank', 'noopener');
     if (!win) {
         FAR.toast('Браузер заблокировал новое окно', 'warning');
