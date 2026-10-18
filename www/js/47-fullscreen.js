@@ -7,17 +7,9 @@
 //   • кнопка «⛶ Fullscreen» в трее панели задач (оконный режим);
 //   • F11 — переключатель;
 //   • автоматическая попытка войти в fullscreen при входе
-//     в оконный режим (клик по «🖥 Рабочий стол» — это
-//     user gesture, браузер разрешит);
+//     в оконный режим (клик по «🖥 Рабочий стол»);
 //   • после перезагрузки, если пользователь ранее был
-//     в fullscreen — восстановление при ПЕРВОМ user gesture
-//     (клик / keydown / touchstart), т.к. браузеры не
-//     разрешают requestFullscreen() без жеста.
-//
-// Флаг «желаю fullscreen» (localStorage: filebd_fullscreen)
-// НЕ сбрасывается при выходе по Esc. Это сделано специально:
-// если пользователь случайно нажал Esc и перезагрузил
-// страницу — fullscreen восстановится при первом клике.
+//     в fullscreen — восстановление при ПЕРВОМ user gesture.
 
 FAR.FS = FAR.FS || {};
 
@@ -73,8 +65,6 @@ FAR.FS.enter = async function () {
         await FAR.FS._request();
         return true;
     } catch (e) {
-        // NotAllowedError — браузер не увидел user gesture.
-        // Это нормально при автозапуске. Молчим.
         if (!e || e.name !== 'NotAllowedError') {
             console.warn('[FS] enter failed:', e && e.name, e && e.message);
         }
@@ -84,7 +74,7 @@ FAR.FS.enter = async function () {
 
 FAR.FS.exit = async function () {
     if (!FAR.FS._isActive()) return true;
-    FAR.FS._saveWanted(false);   // ← добавить
+    // Флаг снимется автоматически через _watchState
     try {
         await FAR.FS._exit();
         return true;
@@ -118,18 +108,12 @@ FAR.FS._loadWanted = function () {
 // ------------------------------------------------------------
 // Слежение за состоянием
 // ------------------------------------------------------------
-//
-// ВАЖНО: НЕ сбрасываем флаг при выходе из fullscreen.
-// Флаг = «пользователь хочет fullscreen при перезагрузке».
-// Он ставится при успешном входе и больше не сбрасывается
-// автоматически. Снимается только явным действием —
-// например, выключением через toggle() (см. ниже).
+// ВАЖНО: Теперь сохраняем и `true`, и `false`.
 
 FAR.FS._watchState = function () {
     const onChange = function () {
-        if (FAR.FS._isActive()) {
-            FAR.FS._saveWanted(true);
-        }
+        // Сохраняем актуальное состояние (включено/выключено)
+        FAR.FS._saveWanted(FAR.FS._isActive());
         FAR.FS._updateAllButtons();
     };
     document.addEventListener('fullscreenchange', onChange);
@@ -141,13 +125,8 @@ FAR.FS._watchState = function () {
 // ------------------------------------------------------------
 // Автовосстановление после перезагрузки
 // ------------------------------------------------------------
-//
-// Если флаг стоит, а fullscreen не активен — ждём ПЕРВОГО
-// user gesture (клик / keydown / touchstart) и пробуем
-// войти. Как только вошли — снимаем все обработчики.
-
 FAR.FS._installAutoRestore = function () {
-    if (!FAR.FS._loadWanted()) return;
+    if (!FAR.FS._loadWanted()) return; // Пользователь отключил, не навязываем
     if (FAR.FS._isActive()) return;
     if (!FAR.FS._isSupported()) return;
 
@@ -159,13 +138,11 @@ FAR.FS._installAutoRestore = function () {
     };
 
     const handler = async function (e) {
-        // Не перехватываем, если фокус в поле ввода
         const t = e.target;
         const tag = (t && t.tagName) || '';
         if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) {
             return;
         }
-
         const ok = await FAR.FS.enter();
         if (ok) {
             removeHandlers();
@@ -185,23 +162,17 @@ FAR.FS._installAutoRestore = function () {
 FAR.FS._updateAllButtons = function () {
     const isFs = FAR.FS._isActive();
 
-    // --- Кнопка в тулбаре ---
     const tbBtn = document.getElementById('btnFullscreen');
     if (tbBtn) {
         tbBtn.textContent = isFs ? '⛶ Exit Fullscreen' : '⛶ Fullscreen';
-        tbBtn.title = isFs
-            ? 'Выйти из полноэкранного режима (F11)'
-            : 'Войти в полноэкранный режим (F11)';
+        tbBtn.title = isFs ? 'Выйти из полноэкранного режима (F11)' : 'Войти в полноэкранный режим (F11)';
     }
 
-    // --- Кнопка в трее WM ---
     const trayEl = document.getElementById('wmTrayFullscreen');
     if (trayEl) {
         const spanEl = trayEl.querySelector('span');
         if (spanEl) spanEl.textContent = isFs ? 'On' : 'Off';
-        trayEl.title = isFs
-            ? 'Выйти из полноэкранного режима (F11)'
-            : 'Войти в полноэкранный режим (F11)';
+        trayEl.title = isFs ? 'Выйти из полноэкранного режима (F11)' : 'Войти в полноэкранный режим (F11)';
         trayEl.style.cursor = 'pointer';
     }
 };
@@ -271,14 +242,11 @@ document.addEventListener('keydown', function (e) {
 }, true);
 
 // ------------------------------------------------------------
-// Обёртка над FAR.WM.enter: при входе в оконный режим
-// сразу пробуем включить fullscreen. Пользователь только
-// что кликнул — это user gesture.
+// Обёртка над FAR.WM.enter
 // ------------------------------------------------------------
 
 (function wrapWMEnter() {
     if (typeof FAR.WM === 'undefined' || typeof FAR.WM.enter !== 'function') {
-        // WM.enter появится позже — попробуем через таймер.
         setTimeout(wrapWMEnter, 50);
         return;
     }
@@ -288,14 +256,8 @@ document.addEventListener('keydown', function (e) {
     const origEnter = FAR.WM.enter;
     FAR.WM.enter = function () {
         const r = origEnter.apply(this, arguments);
-
-        // Пытаемся войти в fullscreen. Внутри setTimeout —
-        // уже не user gesture, но попытка бесплатная. Если
-        // не получится — сработает _installAutoRestore при
-        // первом клике.
         try { FAR.FS.enter().catch(function () {}); } catch (e) {}
 
-        // Устанавливаем кнопку в трее при входе в WM
         setTimeout(function () {
             FAR.FS.installWmTrayButton();
             FAR.FS._updateAllButtons();

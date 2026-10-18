@@ -1,22 +1,6 @@
 // ============================================================
 // 45-wm-bridge.js — оконный мост (независимые проигрыватели)
 // ============================================================
-//
-// АРХИТЕКТУРА:
-//
-//   Классический режим — работает как раньше, через модалки.
-//     FAR.openFile → оригинальный openFile → модалки.
-//
-//   Оконный режим — использует СВОИ простые проигрыватели,
-//     которые НЕ трогают оригинальные модалки и НЕ вызывают
-//     openXxxViewer. Они рендерят содержимое прямо в win.bodyEl.
-//
-// Почему так:
-//   • Никакого стешинга id → классический режим не ломается.
-//   • Никакого общего состояния (FAR._mp3Audio и т.п.) → нет
-//     конфликтов между окнами и модалками.
-//   • Каждое окно полностью независимо и уничтожается со
-//     своим окном.
 
 FAR.WM._orig = FAR.WM._orig || {};
 FAR.WM.PICKER_LAST_DIR = 'filebd_wm_picker_last_dir';
@@ -205,11 +189,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     panelHost.style.cssText = 'flex:1; min-height:0; display:flex; overflow:hidden; position:relative;';
     win.bodyEl.appendChild(panelHost);
 
-    // ============================================================
     // Оверлей для приёма файлов из ОС.
-    // Скрыт по умолчанию, показывается при dragenter с файлами,
-    // скрывается при dragleave или drop.
-    // ============================================================
     const dropOverlay = document.createElement('div');
     dropOverlay.className = 'wm-explorer-drop-overlay';
     dropOverlay.style.cssText =
@@ -228,14 +208,14 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     panelHost.appendChild(dropOverlay);
 
     const renderPathBar = function () {
+        if (!FAR.side[side]) return; // Защита от падения
         const c = FAR.side[side];
-        const norm = FAR.normPath(c.path);
+        const norm = FAR.normPath(c.path || '');
         const dbLabel = c.conn ? FAR.connLabel(c.conn) : '— не подключено —';
         const parts = norm ? norm.split('/').filter(Boolean) : [];
 
         pathBar.innerHTML = '';
 
-        // Бейдж текущей БД (информационный, не кликабельный)
         const dbBadge = document.createElement('span');
         dbBadge.textContent = '🗄️ ' + dbLabel;
         dbBadge.title = 'Текущий источник этой панели: ' + dbLabel;
@@ -245,7 +225,6 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
             'font-family:monospace; font-size:12px;';
         pathBar.appendChild(dbBadge);
 
-        // Кнопка смены БД для этой панели
         const dbBtn = document.createElement('button');
         dbBtn.className = 'wm-explorer-db-btn';
         dbBtn.type = 'button';
@@ -331,18 +310,21 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     FAR.WM._cloneFarPanelInto(panelHost, side);
     renderPathBar();
 
+    // ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Оборачиваем в try-catch и проверяем наличие в DOM
     const pathWatcher = setInterval(function () {
-        if (!FAR.WM.getWindow(win.id)) {
+        if (!FAR.WM.getWindow(win.id) || !document.body.contains(win.el)) {
             clearInterval(pathWatcher);
             return;
         }
-        renderPathBar();
+        try {
+            renderPathBar();
+        } catch (e) {
+            console.warn('[WM explorer] pathWatcher error:', e);
+        }
     }, 400);
     win.props._pathWatcher = pathWatcher;
 
-    // ============================================================
     // Клик по элементу — выделение.
-    // ============================================================
     panelHost.addEventListener('click', function (e) {
         const itemEl = e.target.closest('.file-item');
         if (!itemEl) return;
@@ -355,9 +337,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         renderPathBar();
     }, true);
 
-    // ============================================================
     // Двойной клик — открытие файла / вход в папку.
-    // ============================================================
     panelHost.addEventListener('dblclick', async function (e) {
         const itemEl = e.target.closest('.file-item');
         if (!itemEl) return;
@@ -395,9 +375,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         }
     }, true);
 
-    // ============================================================
     // Контекстное меню (ПКМ).
-    // ============================================================
     panelHost.addEventListener('contextmenu', function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -423,10 +401,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         FAR.WM._showExplorerContextMenu(e.clientX, e.clientY, win, side);
     }, true);
 
-    // ============================================================
     // Drag & drop: НАЧАЛО перетаскивания из этого окна
-    // (внутреннее перетаскивание между WM-окнами, мышь).
-    // ============================================================
     panelHost.addEventListener('mousedown', function (e) {
         if (e.button !== 0) return;
         const itemEl = e.target.closest('.file-item');
@@ -475,12 +450,10 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         };
 
         document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp);   // bubble
+        document.addEventListener('mouseup', onUp);
     });
 
-    // ============================================================
     // Drag & drop: ПРИЁМ файлов из другого WM-окна.
-    // ============================================================
     panelHost.addEventListener('mouseup', function (e) {
         if (!FAR.WM._dragPayload) return;
         if (FAR.WM._dragPayload.sourceWinId === win.id) return;
@@ -496,21 +469,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         FAR.WM._performDrop(win, side);
     });
 
-    // ============================================================
-    // Drag & drop: ПРИЁМ файлов ИЗ ОПЕРАЦИОННОЙ СИСТЕМЫ.
-    //
-    // Это отдельная система событий (HTML5 drag events с
-    // dataTransfer.types, содержащим 'Files'). Она не
-    // конфликтует с внутренним перетаскиванием между
-    // WM-окнами (там мышь, а не HTML5 drag).
-    //
-    // Логика:
-    //   dragenter → показать оверлей, если в dataTransfer есть Files
-    //   dragover  → разрешить drop, установить эффект 'copy'
-    //   dragleave → счётчик, скрыть оверлей при полном выходе
-    //   drop      → прочитать файлы, загрузить в текущий путь панели
-    // ============================================================
-
+    // Drag & drop из ОС
     let osDragCounter = 0;
 
     const hasFiles = function (dt) {
@@ -541,8 +500,6 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     });
 
     panelHost.addEventListener('dragleave', function (e) {
-        // Событие dragleave срабатывает при переходе на дочерний
-        // элемент тоже. Чтобы не мигало — считаем входы/выходы.
         if (!hasFiles(e.dataTransfer)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -561,13 +518,11 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         osDragCounter = 0;
         dropOverlay.style.display = 'none';
 
-        // Собираем файлы (включая содержимое папок) в общий список.
         let files = [];
         try {
             if (typeof FAR.collectFilesFromDataTransfer === 'function') {
                 files = await FAR.collectFilesFromDataTransfer(e.dataTransfer);
             } else {
-                // Резерв: плоский список файлов
                 if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                     files = Array.from(e.dataTransfer.files).map(function (f) {
                         return {
@@ -598,8 +553,6 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
 
         const targetPath = ctx.path || '/';
 
-        // FAR.uploadFilesToPath определяет сторону по
-        // FAR.activePanel — переключаем временно.
         const prevActive = FAR.activePanel;
         FAR.activePanel = side;
 
@@ -611,10 +564,6 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
         } finally {
             FAR.activePanel = prevActive;
         }
-
-        // uploadFilesToPath сам вызывает reloadPanel(side) в конце,
-        // так что список файлов обновится. Крошки пути обновит
-        // pathWatcher в течение 400 мс.
     });
 };
 
@@ -635,6 +584,7 @@ FAR.WM._updateDropTargetUnderCursor = function (x, y, sourceWinId) {
     });
 };
 
+// ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Правильное возвращение ID при закрытии окна
 FAR.WM._cleanupExplorerPanel = function (win) {
     if (win && win.props && win.props._pathWatcher) {
         clearInterval(win.props._pathWatcher);
@@ -642,10 +592,16 @@ FAR.WM._cleanupExplorerPanel = function (win) {
     }
     const side = win && win.props ? win.props.side : null;
     if (!side) return;
+
     const origListId = side === 'left' ? 'listLeft' : 'listRight';
     const stashed = document.getElementById(origListId + '__wm_stash');
     const cloneAlive = document.getElementById(origListId);
-    if (stashed && !cloneAlive) {
+
+    // Если окно закрывается, клон еще в DOM. Принудительно освобождаем ID.
+    if (stashed) {
+        if (cloneAlive) {
+            cloneAlive.id = origListId + '__dead';
+        }
         stashed.id = origListId;
     }
 };
@@ -666,44 +622,18 @@ FAR.WM._explorerNavigate = async function (win, side, targetPath) {
 // ============================================================
 // Контекстное меню (ПКМ) в окне Проводника (WM-режим).
 // ============================================================
-//
-// Пункты:
-//   📤 Загрузить              — залить файлы в текущую папку
-//   📁 Создать папку          — создать подпапку
-//   🌐 Открыть в браузере     — HTML-файл в модалке браузера
-//   🪟 Открыть в новом окне   — прямая ссылка на файл в новой вкладке
-//   📋 Копировать             — во вторую панель
-//   ✂️ Перенести              — во вторую панель
-//   📥 Скачать                — каждый файл отдельно
-//   🗜️ Скачать ZIP            — одним архивом
-//   🗑️ Удалить                — с подтверждением
-//   🔄 Обновить               — перечитать директорию
-//   ⬆ Вверх                   — на уровень выше
-//   🏠 В корень               — в корень сервера
-//
-// Меню рендерится в общий #wmContextMenu, поднимается выше
-// всех окон WM через inline z-index.
-// ============================================================
 
 FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const menu = document.getElementById('wmContextMenu');
     if (!menu) return;
 
-    // ВАЖНО: поднимаем меню выше всех окон WM.
-    // У окон z-index растёт от 6000. Простое значение 99999
-    // перекрывает любое окно, даже с максимальным zTop.
     menu.style.position = 'fixed';
     menu.style.zIndex = '99999';
-
     menu.innerHTML = '';
 
     const selSet = FAR.side[side].selectedIdx;
     const selCount = selSet ? selSet.size : 0;
     const hasDb = !!FAR.side[side].db;
-
-    // ============================================================
-    // Хелперы для построения меню
-    // ============================================================
 
     const add = function (label, enabled, onClick) {
         const el = document.createElement('div');
@@ -738,10 +668,6 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
         };
     };
 
-    // ============================================================
-    // Получаем текущий выбранный элемент.
-    // Нужен для пунктов «Открыть в браузере» и «Открыть в новом окне».
-    // ============================================================
     const getSelectedItem = function () {
         const c = FAR.side[side];
         if (!c) return null;
@@ -757,15 +683,9 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
         && typeof FAR.isHtmlFile === 'function'
         && FAR.isHtmlFile(selectedItem);
 
-    // ============================================================
-    // Пункты меню
-    // ============================================================
-
-    // --- Загрузка/создание ---
     add('📤 Загрузить',     hasDb, withSide(function () { FAR.uploadFile(); }));
     add('📁 Создать папку', hasDb, withSide(function () { FAR.createFolder(); }));
 
-    // --- Открытие файлов ---
     add('🌐 Открыть в браузере', hasDb && isHtml, withSide(function () {
         const it = getSelectedItem();
         if (it) FAR.openBrowserFromItem(it, side);
@@ -778,7 +698,6 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
 
     addSep();
 
-    // --- Файловые операции (требуют выделения) ---
     add('📋 Копировать',    hasDb && selCount > 0, withSide(function () { FAR.copySelected(); }));
     add('✂️ Перенести',      hasDb && selCount > 0, withSide(function () { FAR.moveSelected(); }));
     add('📥 Скачать',       hasDb && selCount > 0, withSide(function () { FAR.downloadSelectedUncompressed(); }));
@@ -787,7 +706,6 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
 
     addSep();
 
-    // --- Навигация ---
     add('🔄 Обновить',      hasDb, withSide(function () { FAR.reloadPanel(side); }));
     add('⬆ Вверх',          true,  withSide(function () { FAR.navigatePanel(side, '..'); }));
     add('🏠 В корень',      true,  withSide(function () { FAR.navigatePanel(side, '/'); }));
@@ -1014,7 +932,7 @@ FAR.WM._mountMp3Viewer = async function (win, props) {
     }
 };
 
-// ---- Видео (WM-окно, прямой URL + Range, растяжение на всю площадь) ----
+// ---- Видео ----
 
 FAR.WM._mountVideoViewer = async function (win, props) {
     const item = props.file;
@@ -1022,12 +940,6 @@ FAR.WM._mountVideoViewer = async function (win, props) {
 
     win.el.querySelector('.wm-title-text').textContent = '🎬 ' + item.name;
 
-    // ============================================================
-    // Контейнер stage получает position:relative + align-items:stretch,
-    // чтобы <video> мог занять его целиком (без центрирования).
-    // Сам <video> растягивается через width/height: 100% +
-    // object-fit: contain (см. inline-стиль ниже).
-    // ============================================================
     win.bodyEl.innerHTML =
         '<div style="height:100%;background:#000;display:flex;flex-direction:column;">' +
         '<div data-role="stage" style="flex:1;display:flex;align-items:stretch;justify-content:stretch;min-height:0;position:relative;background:#000;">' +
@@ -1038,11 +950,6 @@ FAR.WM._mountVideoViewer = async function (win, props) {
     const stage    = win.bodyEl.querySelector('[data-role="stage"]');
     const statusEl = win.bodyEl.querySelector('[data-role="status"]');
 
-    // ============================================================
-    // Прямой URL + Range. Файл НЕ качается в память — браузер сам
-    // делает запросы по диапазонам и буферизует по мере
-    // воспроизведения.
-    // ============================================================
     const directUrl = FAR.buildDirectFileUrl(item, side);
     if (!directUrl) {
         statusEl.textContent = 'Не удалось построить URL';
@@ -1070,15 +977,6 @@ FAR.WM._mountVideoViewer = async function (win, props) {
     if (isCrossOrigin) video.crossOrigin = 'anonymous';
     video.src = url;
 
-    // ============================================================
-    // КЛЮЧЕВОЕ ДЛЯ РАСТЯЖЕНИЯ:
-    //   width:100% + height:100% — растягиваем на весь контейнер;
-    //   object-fit: contain       — сохраняем пропорции, пустые
-    //                               поля заполняются чёрным фоном.
-    //
-    // Если нужно заполнить без чёрных полос (с обрезкой краёв),
-    // замените 'contain' на 'cover'.
-    // ============================================================
     video.style.cssText =
         'width:100%;' +
         'height:100%;' +
@@ -1091,10 +989,9 @@ FAR.WM._mountVideoViewer = async function (win, props) {
 
     win.props._videoEl = video;
 
-    // События
     video.addEventListener('error', function () {
         const err = video.error;
-        if (err && err.code === 1) return;   // ABORTED — норма
+        if (err && err.code === 1) return;
         let reason = 'неизвестная ошибка';
         if (err) {
             switch (err.code) {
@@ -1108,7 +1005,6 @@ FAR.WM._mountVideoViewer = async function (win, props) {
         statusEl.style.color = '#f38ba8';
     });
 
-    // Индикатор буферизации в футере
     video.addEventListener('progress', function () {
         const dur = video.duration;
         if (!isFinite(dur) || dur <= 0) return;
@@ -1164,39 +1060,27 @@ FAR.WM._mountPdfViewer = async function (win, props) {
         statusEl.style.color = '#f38ba8';
     }
 };
-// ============================================================
-// Браузер (WM-окно)
-// ============================================================
-//
-// Внутри win.bodyEl строится UI браузера через общий
-// FAR._createBrowser(). Окно ведёт себя как любое WM-окно:
-// ресайз, снапы, минимизация.
-//
-// Заголовок окна обновляется по onChangeTitle — берём <title>
-// страницы, если iframe same-origin.
+
+// ---- Браузер (WM-окно) ----
 
 FAR.WM._mountBrowserViewer = async function (win, props) {
     const url = props.url || '';
     const homeUrl = props.homeUrl || url;
     const trusted = !!props.trusted;
 
-    // Очищаем тело
     win.bodyEl.innerHTML = '';
     win.bodyEl.style.display = 'flex';
     win.bodyEl.style.flexDirection = 'column';
     win.bodyEl.style.minHeight = '0';
 
-    // Уничтожаем предыдущий инстанс, если что-то было
     if (win.props._browserApi) {
         try { win.props._browserApi.destroy(); } catch (e) {}
         win.props._browserApi = null;
     }
 
-    // Заголовок окна
     const titleEl = win.el.querySelector('.wm-title-text');
     if (titleEl) titleEl.textContent = '🌐 ' + (props.title || 'Браузер');
 
-    // Создаём UI
     const api = FAR._createBrowser(win.bodyEl, {
         url: url,
         homeUrl: homeUrl,
@@ -1204,7 +1088,6 @@ FAR.WM._mountBrowserViewer = async function (win, props) {
         onChangeTitle: function (t) {
             const tEl = win.el.querySelector('.wm-title-text');
             if (tEl) tEl.textContent = t;
-            // Меняем и title окна в панели задач
             win.title = t;
             if (typeof FAR.WM._renderTaskbar === 'function') {
                 FAR.WM._renderTaskbar();
@@ -1214,10 +1097,7 @@ FAR.WM._mountBrowserViewer = async function (win, props) {
 
     win.props._browserApi = api;
 
-    // Если URL был передан — уже стартовали навигацию внутри createBrowser.
-    // Если нет — оставим пустую страницу с подсказкой.
     if (!url) {
-        // Просто фокусируем адресную строку
         setTimeout(function () {
             try {
                 const input = win.bodyEl.querySelector('.browser-url-input');
@@ -1226,7 +1106,6 @@ FAR.WM._mountBrowserViewer = async function (win, props) {
         }, 50);
     }
 };
-
 
 // ---- Панорама ----
 
@@ -1328,7 +1207,7 @@ FAR.WM._attachWmHotspotHandlers = function (win) {
         if (cfg && Array.isArray(cfg.hotSpots)) {
             hotspots = cfg.hotSpots;
         }
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
 
     const divs = container.querySelectorAll('.pnlm-hotspot-base');
     const divsArr = Array.from(divs);
@@ -1493,7 +1372,7 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
             instance.events().onStdout(function (line) {
                 console.log('[WM jsdos]', line);
             });
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
 
         await instance.run(url);
 
@@ -1508,7 +1387,7 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
                 canvas.setAttribute('tabindex', '0');
                 canvas.focus();
             }
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
 
         FAR.WM._installViewerNavButtons(win, item, side);
     } catch (e) {
@@ -1566,12 +1445,11 @@ FAR.WM._mountNesViewer = async function (win, props) {
         return;
     }
 
-    // Диагностика: смотрим первые байты ROM — должны быть 4e 45 53 1a
     try {
         const head = Array.from(romBuffer.slice(0, 16))
             .map(b => b.toString(16).padStart(2, '0')).join(' ');
         console.log('[WM nes] ROM header:', head);
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
 
     await new Promise(function (resolve) { setTimeout(resolve, 30); });
 
@@ -1587,26 +1465,7 @@ FAR.WM._mountNesViewer = async function (win, props) {
         });
         win.props._nesBrowser = browser;
 
-        // ============================================================
-        // ВАЖНО: передаём Uint8Array НАПРЯМУЮ в loadROM.
-        //
-        // Раньше код делал romBuffer.buffer.slice(...) и передавал
-        // ArrayBuffer. JSNES проверяет магические байты через
-        // data[i] / data.charCodeAt(0) — на ArrayBuffer это даёт
-        // undefined, из-за чего выбрасывается "Not a valid NES ROM".
-        //
-        // Uint8Array поддерживает и []-индексацию, и charCodeAt через
-        // правильную обёртку внутри JSNES.
-        // ============================================================
         let romData = romBuffer;
-
-        // Если JSNES ожидает именно ArrayBuffer — этот вариант тоже
-        // работает в современных версиях:
-        // let romData = romBuffer.buffer.slice(
-        //     romBuffer.byteOffset,
-        //     romBuffer.byteOffset + romBuffer.byteLength
-        // );
-
         browser.loadROM(romData);
 
         setTimeout(function () { try { browser.fitInParent(); } catch (e) {} }, 100);
@@ -1634,7 +1493,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         try {
             FAR.WM._finalizeViewer(other);
             FAR.WM.closeWindow(other.id, true);
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
     }
 
     const item = props.file;
@@ -1699,11 +1558,6 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         window.EJS_player        = '#' + tempContainer.id;
         window.EJS_core          = core;
         window.EJS_gameUrl       = blobUrl;
-        // ============================================================
-        // Явно передаём имя файла — EmulatorJS использует расширение
-        // из EJS_gameName, чтобы правильно определить тип ROM,
-        // если по какой-то причине system не сработает.
-        // ============================================================
         window.EJS_gameName      = item.name;
         window.EJS_pathtodata    = 'lib/js-emulator/';
         window.EJS_color         = '#89b4fa';
@@ -1734,15 +1588,6 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         return;
     }
 
-    // ============================================================
-    // Готовим EJS_* глобалы и config.
-    //
-    // КЛЮЧЕВОЕ:
-    //   • EJS_gameName / gameName — имя файла с расширением.
-    //     EmulatorJS извлекает расширение и по нему понимает систему.
-    //   • EJS_core / system — тоже явно указываем ядро на случай,
-    //     если EmulatorJS смотрит в первую очередь на system.
-    // ============================================================
     window.EJS_player        = '#' + containerId;
     window.EJS_core          = core;
     window.EJS_gameUrl       = blobUrl;
@@ -1833,16 +1678,6 @@ FAR.WM._navigateViewerGeneric = async function (win, dir) {
             const newItem = files[next];
             const appId = win.appId;
 
-            // ============================================================
-            // Сохраняем геометрию и состояние текущего окна,
-            // чтобы новое окно открылось с теми же размерами
-            // и с теми же флагами (развёрнуто / приклеено).
-            //
-            // ВАЖНО: если окно развёрнуто или приклеено — у него уже
-            // есть prevRect с «нормальным» размером. Именно его и надо
-            // передать в новое окно, иначе после переоткрытия
-            // un-maximize вернёт окно к «полу-максимизированному» виду.
-            // ============================================================
             const saved = {
                 x:      win.x,
                 y:      win.y,
@@ -1869,16 +1704,6 @@ FAR.WM._navigateViewerGeneric = async function (win, dir) {
                 height: saved.height
             });
 
-            // ============================================================
-            // Применяем состояние к новому окну.
-            //
-            // openWindow уже создал окно с нужной геометрией (saved.x/y/w/h).
-            // Теперь надо:
-            //   • если было maximized — развернуть (toggleMaximize
-            //     сам сохранит prevRect = saved-геометрию);
-            //   • если было snapped — приклеить к той же стороне
-            //     (snapWindow тоже сам сохранит prevRect).
-            // ============================================================
             if (newWin) {
                 if (saved.maximized) {
                     FAR.WM.toggleMaximize(newWin.id);
@@ -2050,9 +1875,6 @@ FAR.WM.openFileDialog = function (opts) {
 
         FAR.WM._mountFileDialog(win, side, opts).then(function (picked) {
             done(picked || null);
-            // force=true — onClose пропустим, чтобы не дёргать
-            // done(null) повторно. Key-listener снимается
-            // сам внутри onKeyDown при следующем keydown.
             FAR.WM.closeWindow(win.id, true);
         });
     });
@@ -2061,7 +1883,6 @@ FAR.WM.openFileDialog = function (opts) {
 FAR.WM._mountFileDialog = async function (win, side, opts) {
     return new Promise(function (resolve) {
 
-        // ---- Установка key-обработчика (для cleanup) ----
         let onKeyDown = null;
 
         const removeKeyListener = function () {
@@ -2079,7 +1900,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             }
         };
 
-        // ---- Дом ----
         win.bodyEl.innerHTML = '';
         win.bodyEl.style.display = 'flex';
         win.bodyEl.style.flexDirection = 'row';
@@ -2122,13 +1942,10 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
         const okBtn = colPreview.querySelector('[data-role="ok"]');
         const cancelBtn = colPreview.querySelector('[data-role="cancel"]');
 
-        // ============================================================
-        // Запоминание последнего каталога
-        // ============================================================
         const saveLastDir = function (path) {
             try {
                 localStorage.setItem(FAR.WM.PICKER_LAST_DIR, '/' + FAR.normPath(path));
-            } catch (e) { /* ignore */ }
+            } catch (e) {}
         };
 
         const loadLastDir = function () {
@@ -2142,10 +1959,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
         const clearLastDir = function () {
             try { localStorage.removeItem(FAR.WM.PICKER_LAST_DIR); } catch (e) {}
         };
-
-        // ============================================================
-        // Helpers
-        // ============================================================
 
         const getVisible = function () {
             let items = state.items.slice();
@@ -2177,9 +1990,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             }
         };
 
-        // ============================================================
-        // Рендер списка
-        // ============================================================
         const render = function () {
             pathEl.textContent = state.path;
             listEl.innerHTML = '';
@@ -2235,9 +2045,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             });
         };
 
-        // ============================================================
-        // Загрузка каталога из БД
-        // ============================================================
         const loadDir = async function (path, opts) {
             opts = opts || {};
             const norm = FAR.normPath(path);
@@ -2282,28 +2089,13 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
                 state.cursor = getVisible().length > 0 ? 0 : -1;
                 render();
 
-                // ============================================================
-                // Сохраняем каталог как «последний использованный»,
-                // ТОЛЬКО если это не откат (флаг fromFallback).
-                // ============================================================
                 if (!opts.fromFallback) {
                     saveLastDir(norm);
                 }
             } catch (e) {
-                // ============================================================
-                // Если мы пытались открыть сохранённый каталог и он
-                // больше не существует (404, БД сменилась, папка
-                // удалена и т.п.) — откатываемся в корень и чистим
-                // сохранённое значение.
-                // ============================================================
                 if (opts.attemptedRestore && norm !== '') {
                     console.warn('[WM picker] сохранённый каталог недоступен:', norm, e.message);
                     clearLastDir();
-                    // Откат в корень. Флаг fromFallback=true, чтобы
-                    // не записать '/' в localStorage как «выбор
-                    // пользователя» — пусть при следующем открытии
-                    // снова попробует восстановить (но там уже
-                    // ничего не будет).
                     return loadDir('/', { fromFallback: true });
                 }
 
@@ -2311,9 +2103,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             }
         };
 
-        // ============================================================
-        // Превью
-        // ============================================================
         const loadPreview = async function (item) {
             if (state.previewUrl) {
                 try { URL.revokeObjectURL(state.previewUrl); } catch (e) {}
@@ -2338,9 +2127,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             }
         };
 
-        // ============================================================
-        // Кнопки
-        // ============================================================
         cancelBtn.onclick = function () { resolve(null); };
         okBtn.onclick = function () { if (state.selected) resolve(state.selected); };
 
@@ -2350,9 +2136,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             render();
         });
 
-        // ============================================================
-        // Клавиатура
-        // ============================================================
         onKeyDown = function (e) {
             if (FAR.WM.state.activeWindowId !== win.id) return;
             if (!FAR.WM.getWindow(win.id)) {
@@ -2471,13 +2254,6 @@ FAR.WM._mountFileDialog = async function (win, side, opts) {
             try { listEl.focus(); } catch (e) {}
         }, 50);
 
-        // ============================================================
-        // Первая загрузка: попытка восстановить последний каталог.
-        //
-        // Если сохранённого пути нет — открываем корень как обычно.
-        // Если путь есть — пытаемся в него войти, и при ошибке
-        // loadDir сам откатится в '/' и очистит ключ.
-        // ============================================================
         const lastDir = loadLastDir();
         if (lastDir && FAR.normPath(lastDir) !== '') {
             loadDir(lastDir, { attemptedRestore: true });
@@ -2495,31 +2271,6 @@ FAR.WM._mountFileDialogAsApp = async function (win, props) {
 // Обёртка ТОЛЬКО на FAR.openFile
 // ============================================================
 
-// ============================================================
-// Файл: js/45-wm-bridge.js
-// Функция: FAR.WM._installOpenFileWrapper (полный листинг)
-// ============================================================
-
-// ============================================================
-// Обёртка ТОЛЬКО на FAR.openFile
-// ============================================================
-//
-// В оконном режиме выбирает, в каком WM-приложении открыть файл,
-// вместо модалок классического режима.
-//
-// Порядок проверок важен:
-//   1. .fbmp3 (плейлист) — первым, т.к. может совпасть с json
-//   2. .jsdos   — DOS-игра
-//   3. .nes     — JSNES
-//   4. EmulatorJS (.smc, .sfc, .gba, .psx и др.)
-//   5. Аудио (.mp3, .m4a, ...)
-//   6. Видео (.mp4, .webm, ...)
-//   7. PDF (.pdf)
-//   8. HTML (.html, .htm) → модалка браузера поверх WM-окон
-//   9. Панорама (соотношение ≈ 2:1)
-//  10. Fallback — универсальный просмотрщик
-// ============================================================
-
 FAR.WM._installOpenFileWrapper = function () {
     if (FAR.WM._openFileWrapped) return;
     FAR.WM._openFileWrapped = true;
@@ -2533,55 +2284,36 @@ FAR.WM._installOpenFileWrapper = function () {
 
         side = side || FAR.activePanel;
         try {
-            // ============================================================
-            // Плейлист .fbmp3 — открываем в MP3-плеере и загружаем
-            // список треков. Проверка идёт ПЕРВОЙ, т.к. .fbmp3 не
-            // попадает ни в один другой тип, а по contentType может
-            // случайно совпасть с json (не критично, но лучше явно).
-            // ============================================================
             if (typeof FAR.WM.isFbmp3 === 'function' && FAR.WM.isFbmp3(item)) {
                 return FAR.WM.openApp('mp3', {
                     props: { file: item, side: side, playlistPath: item.path }
                 });
             }
 
-            // ---- JSDOS ----
             if (typeof FAR.isJsdos === 'function' && FAR.isJsdos(item)) {
                 return FAR.WM.openApp('jsdos', { props: { file: item, side: side } });
             }
 
-            // ---- NES ----
             if (typeof FAR.isNes === 'function' && FAR.isNes(item)) {
                 return FAR.WM.openApp('nes', { props: { file: item, side: side } });
             }
 
-            // ---- EmulatorJS (SNES, N64, GBA, PSX, Sega и т.д.) ----
             if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) {
                 return FAR.WM.openApp('emulator', { props: { file: item, side: side } });
             }
 
-            // ---- Аудио ----
             if (typeof FAR.isMp3 === 'function' && FAR.isMp3(item)) {
                 return FAR.WM.openApp('mp3', { props: { file: item, side: side } });
             }
 
-            // ---- Видео ----
             if (typeof FAR.isVideo === 'function' && FAR.isVideo(item)) {
                 return FAR.WM.openApp('video', { props: { file: item, side: side } });
             }
 
-            // ---- PDF ----
             if (typeof FAR.isPdf === 'function' && FAR.isPdf(item)) {
                 return FAR.WM.openApp('pdf', { props: { file: item, side: side } });
             }
 
-            // ============================================================
-            // HTML-документ — открываем в модалке «Браузер».
-            //
-            // ВАЖНО: это модалка, а не WM-окно. Она поднимается
-            // над окнами WM (z-index выставляется внутри openBrowser).
-            // Модуль: js/38-browser-viewer.js
-            // ============================================================
             if (typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(item)) {
                 if (typeof FAR.openBrowserFromItem === 'function') {
                     FAR.openBrowserFromItem(item, side);
@@ -2590,7 +2322,6 @@ FAR.WM._installOpenFileWrapper = function () {
                 console.warn('[WM openFile] FAR.openBrowserFromItem не загружен');
             }
 
-            // ---- Панорама 360° (асинхронная проверка по размерам) ----
             if (typeof FAR.isPanorama === 'function') {
                 let isPano = false;
                 try { isPano = await FAR.isPanorama(item, side); } catch (e) {}
@@ -2602,7 +2333,6 @@ FAR.WM._installOpenFileWrapper = function () {
             console.warn('[WM openFile] проверка типа:', e);
         }
 
-        // ---- Fallback: универсальный просмотрщик ----
         return FAR.WM.openApp('viewer', { props: { file: item, side: side } });
     };
 };
@@ -2625,11 +2355,6 @@ FAR.WM._openExplorerConnDialog = function (parentWin, side) {
     FAR.WM._mountSideConnUI(dialogWin, side);
 };
 
-/**
- * Диалог подключения одной панели WM-проводника.
- * Поддерживает выбор типа БД (couchdb / filesystem),
- * ввод логина/пароля и выбор корневого каталога.
- */
 FAR.WM._mountSideConnUI = function (win, side) {
     win.bodyEl.innerHTML =
         '<div style="padding:20px;background:#1e1e2e;color:#cdd6f4;height:100%;box-sizing:border-box;overflow:auto;">' +
@@ -2662,7 +2387,6 @@ FAR.WM._mountSideConnUI = function (win, side) {
     const cancelBtn  = win.bodyEl.querySelector('[data-role="cancel"]');
     const connectBtn = win.bodyEl.querySelector('[data-role="connect"]');
 
-    // Предзаполнение
     const ctx = FAR.side[side];
     let def = null;
     if (ctx && ctx.conn) def = ctx.conn;
@@ -2724,32 +2448,9 @@ FAR.WM._mountSideConnUI = function (win, side) {
 };
 
 // ============================================================
-// Файл: js/45-wm-bridge.js
 // Множественный выбор файлов из БД
 // ============================================================
-//
-// Отличия от openFileDialog:
-//   • можно выбрать несколько файлов;
-//   • порядок выбора сохраняется и возвращается в том же
-//     порядке, в котором пользователь щёлкал по файлам:
-//       • обычный клик          — единственный выбор
-//       • Ctrl/Cmd + клик       — добавить / убрать из выбора
-//       • Shift + клик          — выделить диапазон (снизу вверх)
-//       • двойной клик / Enter  — подтвердить и вернуть выбранное
-//   • возвращает Promise<Array<item>|null>:
-//       • null — пользователь отменил (Escape/Отмена/крестик)
-//       • []   — не бывает, при пустом выборе OK заблокирован
-//       • [...] — выбранные элементы в порядке добавления
 
-/**
- * Множественный выбор. Возвращает Promise<Array<item>|null>.
- *
- * @param {Object} [opts]
- *   @param {string} [opts.side]         — сторона по умолчанию
- *   @param {string} [opts.title]        — заголовок окна
- *   @param {number} [opts.parentId]     — id родительского окна (модальность)
- *   @param {string} [opts.filter]       — начальный фильтр
- */
 FAR.WM.openFileDialogMulti = function (opts) {
     opts = opts || {};
     return new Promise(function (resolve) {
@@ -2779,15 +2480,9 @@ FAR.WM.openFileDialogMulti = function (opts) {
     });
 };
 
-// ============================================================
-// Файл: js/45-wm-bridge.js
-// Функция: FAR.WM._mountFileDialogMulti (полный листинг)
-// ============================================================
-
 FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
     return new Promise(function (resolve) {
 
-        // ---------- key listener cleanup ----------
         let onKeyDown = null;
         const removeKeyListener = function () {
             if (!onKeyDown) return;
@@ -2803,7 +2498,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             }
         };
 
-        // ---------- Дом ----------
         win.bodyEl.innerHTML = '';
         win.bodyEl.style.display = 'flex';
         win.bodyEl.style.flexDirection = 'row';
@@ -2813,7 +2507,7 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             path: '/',
             items: [],
             cursor: -1,
-            ordered: [],       // ← выбранные items в порядке добавления
+            ordered: [],
             anchorIdx: -1,
             previewUrl: null,
             filter: opts.filter || null
@@ -2847,7 +2541,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
         const okBtn = colPreview.querySelector('[data-role="ok"]');
         const cancelBtn = colPreview.querySelector('[data-role="cancel"]');
 
-        // ---------- Последний каталог ----------
         const saveLastDir = function (path) {
             try {
                 localStorage.setItem(FAR.WM.PICKER_LAST_DIR, '/' + FAR.normPath(path));
@@ -2861,7 +2554,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             try { localStorage.removeItem(FAR.WM.PICKER_LAST_DIR); } catch (e) {}
         };
 
-        // ---------- Helpers ----------
         const getVisible = function () {
             let items = state.items.slice();
             if (state.filter) {
@@ -2930,7 +2622,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             }
         };
 
-        // ---------- Render ----------
         const render = function () {
             pathEl.textContent = state.path;
             listEl.innerHTML = '';
@@ -2954,7 +2645,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
                 if (it._up || it.isFolder) icon = '📁';
                 else if (it.isImage) icon = '🖼️';
 
-                // Бейдж порядка, если выбран
                 const badge = orderIdx >= 0
                     ? '<span style="display:inline-block;min-width:22px;text-align:center;' +
                     'background:#4aa3ff;color:#1e1e2e;border-radius:3px;padding:0 4px;' +
@@ -2980,15 +2670,12 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
                     }
 
                     if (e.ctrlKey || e.metaKey) {
-                        // Ctrl — переключить
                         if (orderIdx >= 0) removeFromOrdered(it.path);
                         else addToOrdered(it);
                         state.anchorIdx = idx;
                     } else if (e.shiftKey && state.anchorIdx >= 0) {
-                        // Shift — диапазон
                         const a = Math.min(state.anchorIdx, idx);
                         const b = Math.max(state.anchorIdx, idx);
-                        // Очищаем и добавляем диапазон в визуальном порядке
                         state.ordered = [];
                         for (let i = a; i <= b; i++) {
                             const cand = items[i];
@@ -2997,7 +2684,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
                             }
                         }
                     } else {
-                        // Обычный — одиночный выбор
                         state.ordered = [it];
                         state.anchorIdx = idx;
                     }
@@ -3024,14 +2710,12 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             updateFooter();
         };
 
-        // ---------- LoadDir ----------
         const loadDir = async function (path, opts2) {
             opts2 = opts2 || {};
             const norm = FAR.normPath(path);
             state.path = '/' + norm;
             state.cursor = -1;
             state.anchorIdx = -1;
-            // Не сбрасываем ordered — выбор копится по нескольким папкам
             infoEl.textContent = '';
             previewEl.innerHTML = '';
             listEl.innerHTML = '<div style="padding:20px;text-align:center;color:#6c7086;">Загрузка…</div>';
@@ -3073,7 +2757,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             }
         };
 
-        // ---------- Preview ----------
         const loadPreview = async function (item) {
             if (state.previewUrl) {
                 try { URL.revokeObjectURL(state.previewUrl); } catch (e) {}
@@ -3097,7 +2780,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             }
         };
 
-        // ---------- Кнопки ----------
         cancelBtn.onclick = function () { resolve(null); };
         okBtn.onclick = function () {
             if (state.ordered.length === 0) return;
@@ -3110,7 +2792,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             render();
         });
 
-        // ---------- Клавиатура ----------
         onKeyDown = function (e) {
             if (FAR.WM.state.activeWindowId !== win.id) return;
             if (!FAR.WM.getWindow(win.id)) {
@@ -3172,11 +2853,9 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
                 if (it.isFolder) { loadDir(it.path); return; }
                 addToOrdered(it);
                 if (e.shiftKey || state.ordered.length > 1) {
-                    // Просто добавляем
                     render();
                     updateFooter();
                 } else {
-                    // Один файл — сразу подтверждаем
                     resolve(state.ordered.slice());
                 }
                 return;
@@ -3196,7 +2875,6 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
             try { listEl.focus(); } catch (e) {}
         }, 50);
 
-        // ---------- Стартовая загрузка ----------
         const lastDir = loadLastDir();
         if (lastDir && FAR.normPath(lastDir) !== '') {
             loadDir(lastDir, { attemptedRestore: true });
@@ -3206,17 +2884,9 @@ FAR.WM._mountFileDialogMulti = async function (win, side, opts) {
     });
 };
 
-// ============================================================
-// Console (WM-окно)
-// ============================================================
-// ============================================================
-// Console (WM-окно)
-// ============================================================
-
 FAR.WM._mountConsoleViewer = async function (win, props) {
     win.el.querySelector('.wm-title-text').textContent = '🖥 Console';
 
-    // Уничтожаем предыдущий инстанс
     if (win.props._consoleApi) {
         try { win.props._consoleApi.destroy(); } catch (e) {}
         win.props._consoleApi = null;
@@ -3229,12 +2899,10 @@ FAR.WM._mountConsoleViewer = async function (win, props) {
 
     win.props._consoleApi = FAR._createConsole(win.bodyEl, {});
 
-    // Фокусируем скрытый textarea xterm, чтобы клавиши сразу шли в терминал
     setTimeout(function () {
         const ta = win.bodyEl.querySelector('.xterm-helper-textarea');
         if (ta) try { ta.focus(); } catch (e) {}
     }, 100);
 };
-
 
 FAR.WM._installOpenFileWrapper();

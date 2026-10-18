@@ -1,0 +1,1 @@
+cd /data/data/com.termux/files/home/file_server_jar && java -jar file-server.jar
