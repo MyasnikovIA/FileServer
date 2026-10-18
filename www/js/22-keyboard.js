@@ -47,15 +47,13 @@ FAR.setupKeyboard = function() {
                 FAR.closeGamepadSetup();
                 return;
             }
-            if (!FAR.progress.active) FAR.closeViewer();
+            // Закрываем обычный просмотрщик только если нет активных
+            // операций прогресса (чтобы не закрывать пользователю фоновые задачи).
+            if (!FAR.hasActiveProgress()) FAR.closeViewer();
             return;
         }
 
         // === ОКОННЫЙ РЕЖИМ: клавиатуру получает активное окно WM ===
-        // Если WM активен, панели FAR должны обрабатывать клавиши
-        // ТОЛЬКО когда активное окно — Проводник. Во всех остальных
-        // случаях (эмулятор, просмотрщик, плеер, диалог) событие
-        // уходит своему обработчику внутри окна, а FAR его не трогает.
         if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active) {
             const activeWin = (typeof FAR.WM.getActiveWindow === 'function')
                 ? FAR.WM.getActiveWindow()
@@ -65,54 +63,42 @@ FAR.setupKeyboard = function() {
             }
         }
 
-        if (FAR.progress.active) return;
+        if (FAR.hasActiveProgress()) return;
         if (!FAR.db) return;
 
-        // Не перехватываем навигацию в полях ввода
         const tag = (e.target && e.target.tagName) || '';
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
 
-        // Модалка подключения — не мешаем
         const connModal = document.getElementById('connModal');
         if (connModal && !connModal.classList.contains('hidden')) return;
 
-        // Обычный просмотрщик — не перехватываем
         const viewerModal = document.getElementById('viewerModal');
         if (viewerModal && !viewerModal.classList.contains('hidden')) return;
 
-        // Редактор точек перехода — не перехватываем
         const edModal = document.getElementById('panoramaEditorModal');
         if (edModal && !edModal.classList.contains('hidden')) return;
 
-        // Модалка просмотра панорамы — не перехватываем
         const panoModal2 = document.getElementById('panoramaViewerModal');
         if (panoModal2 && !panoModal2.classList.contains('hidden')) return;
 
-        // Модалка JSDOS — не перехватываем (ввод идёт в дос-эмулятор)
         const jsdosModal2 = document.getElementById('jsdosViewerModal');
         if (jsdosModal2 && !jsdosModal2.classList.contains('hidden')) return;
 
-        // Модалка NES — не перехватываем (стрелки идут в JSNES)
         const nesModal2 = document.getElementById('nesViewerModal');
         if (nesModal2 && !nesModal2.classList.contains('hidden')) return;
 
-        // Модалка EmulatorJS — не перехватываем (стрелки идут в эмулятор)
         const emuModal2 = document.getElementById('emulatorViewerModal');
         if (emuModal2 && !emuModal2.classList.contains('hidden')) return;
 
-        // Модалка MP3 — не перехватываем (стрелки и пробел идут в <audio>)
         const mp3Modal2 = document.getElementById('mp3ViewerModal');
         if (mp3Modal2 && !mp3Modal2.classList.contains('hidden')) return;
 
-        // Модалка видео — не перехватываем (пробел/стрелки идут в <video>)
         const videoModal2 = document.getElementById('videoViewerModal');
         if (videoModal2 && !videoModal2.classList.contains('hidden')) return;
 
-        // Модалка PDF — не перехватываем
         const pdfModal2 = document.getElementById('pdfViewerModal');
         if (pdfModal2 && !pdfModal2.classList.contains('hidden')) return;
 
-        // Окно настройки джойстика — не перехватываем
         const gpSetup2 = document.getElementById('gamepadSetupModal');
         if (gpSetup2 && !gpSetup2.classList.contains('hidden')) return;
 
@@ -169,7 +155,6 @@ FAR.setupKeyboard = function() {
             return;
         }
 
-        // === Хоткеи действий ===
         if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
             const selSet = side === 'left' ? FAR.leftSelectedIdx : FAR.rightSelectedIdx;
             selSet.clear();

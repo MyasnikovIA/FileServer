@@ -37,6 +37,82 @@ FAR.FsClient.prototype._fetch = function (url, opts) {
     return fetch(url, opts);
 };
 
+// ============================================================
+// Ретраи для идемпотентных запросов.
+//
+// Зачем: при параллельных копированиях сервер может ответить
+// 5xx (временная перегрузка / гонка за директорию / race при
+// создании временного файла). Повтор с экспоненциальной паузой
+// почти всегда проходит со второй-третьей попытки.
+//
+// ВАЖНО: opts.body должен быть ArrayBuffer/Uint8Array/undefined —
+// он не «вычитывается» fetch'ем, поэтому повтор безопасен.
+// ReadableStream повторять нельзя — здесь такие тела не используются.
+//
+// Параметры:
+//   maxAttempts = 4           — всего попыток (1 + 3 ретрая)
+//   delays      = [150,400,900,1800] мс  — паузы перед 2-й, 3-й, 4-й попыткой
+//                                          (плюс джиттер 0–100 мс)
+// ============================================================
+FAR.FsClient.prototype._fetchWithRetry = async function (url, opts, retryOpts) {
+    opts = opts || {};
+    retryOpts = retryOpts || {};
+
+    const maxAttempts = retryOpts.maxAttempts || 4;
+    const delays = retryOpts.delays || [150, 400, 900, 1800];
+    const method = (opts.method || 'GET').toUpperCase();
+
+    let lastErr = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+            const res = await this._fetch(url, opts);
+
+            // Ретраим 5xx (500, 502, 503, 504) — кроме последней попытки
+            const is5xx = res.status >= 500 && res.status < 600;
+            if (is5xx && attempt < maxAttempts - 1) {
+                // Сливаем тело, чтобы освободить соединение
+                try { await res.text(); } catch (e) { /* ignore */ }
+
+                const base = delays[attempt] || delays[delays.length - 1];
+                const jitter = Math.floor(Math.random() * 100);
+                const wait = base + jitter;
+
+                console.warn(
+                    '[FsClient] ' + method + ' ' + url +
+                    ' → ' + res.status + ', retry #' + (attempt + 1) +
+                    ' in ' + wait + 'ms'
+                );
+                await new Promise(r => setTimeout(r, wait));
+                continue;
+            }
+
+            return res;
+        } catch (e) {
+            // Сетевая ошибка (DNS, CORS, offline и т.п.) — тоже ретраим
+            lastErr = e;
+
+            if (attempt < maxAttempts - 1) {
+                const base = delays[attempt] || delays[delays.length - 1];
+                const jitter = Math.floor(Math.random() * 100);
+                const wait = base + jitter;
+
+                console.warn(
+                    '[FsClient] ' + method + ' ' + url +
+                    ' network error (' + (e && e.message) + '), retry #' +
+                    (attempt + 1) + ' in ' + wait + 'ms'
+                );
+                await new Promise(r => setTimeout(r, wait));
+                continue;
+            }
+
+            throw e;
+        }
+    }
+
+    throw lastErr || new Error('Max retries exceeded for ' + method + ' ' + url);
+};
+
 FAR.FsClient.prototype._url = function (path, params) {
     params = params || {};
     const q = Object.keys(params).map(function (k) {
@@ -99,15 +175,6 @@ FAR.FsClient.prototype._entryToDoc = function (entry, kind) {
     };
 };
 
-// ============================================================
-// Разбор тела ответа об ошибке.
-//
-// Для 507 (квота) сервер возвращает JSON:
-//   { error, scope, quotaMb, usedBytes, freeBytes, deltaBytes, status }
-// Для прочих ошибок — { error, status } или просто текст.
-//
-// Возвращает человекочитаемое сообщение.
-// ============================================================
 FAR.FsClient._errorFromResponse = async function (res) {
     let msg = 'HTTP ' + res.status;
     try {
@@ -129,11 +196,9 @@ FAR.FsClient._errorFromResponse = async function (res) {
             } else if (body && body.message) {
                 msg = body.message;
             } else if (text.length < 240) {
-                // Если JSON без known-полей — выводим как есть (компактно)
                 msg = 'HTTP ' + res.status + ' ' + text;
             }
         } catch (jsonErr) {
-            // Не JSON — просто текст
             msg = text.length > 240 ? text.substring(0, 240) + '…' : text;
         }
     } catch (readErr) { /* ignore */ }
@@ -143,7 +208,7 @@ FAR.FsClient._errorFromResponse = async function (res) {
 // ---- info ----
 
 FAR.FsClient.prototype.info = async function () {
-    const res = await this._fetch(this._url('/api/info'));
+    const res = await this._fetchWithRetry(this._url('/api/info'));
     if (res.status === 401) {
         const e = new Error('Неверный логин или пароль'); e.status = 401; throw e;
     }
@@ -157,6 +222,8 @@ FAR.FsClient.prototype.info = async function () {
         username: info.username,
         anonymous: info.anonymous,
         console: !!info.console,
+        videoChatEnabled: !!info.videoChatEnabled,
+        videoChatPort: info.videoChatPort,
         shares: info.shares || [],
         userQuotaMb: info.userQuotaMb,
         userUsedBytes: info.userUsedBytes,
@@ -185,7 +252,7 @@ FAR.FsClient.prototype.allDocs = async function (opts) {
     }
 
     if (!opts.startkey && !opts.endkey) {
-        const res = await this._fetch(this._url('/api/list', { path: '', recursive: 1 }));
+        const res = await this._fetchWithRetry(this._url('/api/list', { path: '', recursive: 1 }));
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         let entries = data.entries || [];
@@ -206,7 +273,7 @@ FAR.FsClient.prototype.allDocs = async function (opts) {
     const prefix = this._pathFromKey(opts.startkey);
     const recursive = !!opts.recursive;
 
-    const res = await this._fetch(this._url('/api/list', {
+    const res = await this._fetchWithRetry(this._url('/api/list', {
         path: prefix, recursive: recursive ? 1 : 0
     }));
     if (!res.ok) {
@@ -239,7 +306,7 @@ FAR.FsClient.prototype.get = async function (id) {
     }
     const path = this._pathFromId(id);
 
-    const res = await this._fetch(this._url('/api/stat', { path: path }));
+    const res = await this._fetchWithRetry(this._url('/api/stat', { path: path }));
 
     if (res.status === 404) {
         const err = new Error('missing'); err.status = 404; err.name = 'not_found'; throw err;
@@ -265,7 +332,7 @@ FAR.FsClient.prototype.put = async function (doc) {
     const path = this._pathFromId(doc._id);
 
     if (kind === 'folder') {
-        const res = await this._fetch(this._url('/api/mkdir', { path: path }), { method: 'POST' });
+        const res = await this._fetchWithRetry(this._url('/api/mkdir', { path: path }), { method: 'POST' });
         if (!res.ok) {
             const msg = await FAR.FsClient._errorFromResponse(res);
             const e = new Error(msg);
@@ -289,7 +356,7 @@ FAR.FsClient.prototype.put = async function (doc) {
     const ct = (doc._attachments && doc._attachments.b && doc._attachments.b.content_type)
         || doc.contentType || 'application/octet-stream';
 
-    const res = await this._fetch(this._url('/api/write', { path: path }), {
+    const res = await this._fetchWithRetry(this._url('/api/write', { path: path }), {
         method: 'PUT',
         headers: { 'Content-Type': ct },
         body: data
@@ -310,37 +377,18 @@ FAR.FsClient.prototype.remove = async function (doc) {
     if (!id) throw new Error('remove: _id is required');
     const path = this._pathFromId(id);
 
-    const res = await this._fetch(this._url('/api/delete', { path: path }), { method: 'DELETE' });
+    const res = await this._fetchWithRetry(this._url('/api/delete', { path: path }), { method: 'DELETE' });
     if (!res.ok && res.status !== 404) throw new Error('HTTP ' + res.status);
     return { ok: true };
 };
 
 // ============================================================
-// getAttachment — читает тело файла.
-//
-// ВАЖНО: используется ПРЯМОЙ URL вида <baseUrl>/<path>,
-// а не /api/read?path=...
-//
-//   <baseUrl>/Documents/Games/SNES/Worms.smc
-//
-// Это даёт:
-//   • единообразие с просмотром файлов напрямую (a href, img, video);
-//   • браузерное кэширование blob/файлов по стабильному URL;
-//   • возможность открыть тот же файл в новой вкладке.
-//
-// Сервер поддерживает и /api/read, и прямые URL — оба
-// возвращают один и тот же контент. Здесь мы явно выбираем
-// прямые URL.
-//
-// Кодирование: слэши остаются разделителями, каждый сегмент
-// URL-encoded (пробелы, кириллица, спецсимволы).
+// getAttachment — читает тело файла через ПРЯМОЙ URL.
 // ============================================================
 FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
     opts = opts || {};
     const path = this._pathFromId(id);
 
-    // Собираем прямой URL: каждый сегмент кодируем отдельно,
-    // слэши остаются как есть.
     const encodedPath = String(path)
         .split('/')
         .filter(Boolean)
@@ -349,7 +397,7 @@ FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
 
     const url = this.baseUrl + '/' + encodedPath;
 
-    const res = await this._fetch(url);
+    const res = await this._fetchWithRetry(url);
 
     if (res.status === 404) {
         const err = new Error('missing');
@@ -372,14 +420,17 @@ FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
 // ---- putAttachment ----
 //
 // ЕДИНАЯ АТОМАРНАЯ ЗАПИСЬ: один PUT /api/write с содержимым.
-// При превышении квоты (507) файл на диске сервера не создаётся
-// вовсе — пустых «заглушек» не остаётся.
+// При превышении квоты (507) файл не создаётся вовсе.
+//
+// Ретраи на 5xx: при параллельных копированиях сервер может
+// ответить 500 из-за гонки — повтор с экспоненциальной паузой
+// проходит со 2-3 попытки.
 FAR.FsClient.prototype.putAttachment = async function (id, name, rev, blob, contentType) {
     const path = this._pathFromId(id);
     let body = blob;
     if (blob && typeof blob.arrayBuffer === 'function') body = await blob.arrayBuffer();
 
-    const res = await this._fetch(this._url('/api/write', { path: path }), {
+    const res = await this._fetchWithRetry(this._url('/api/write', { path: path }), {
         method: 'PUT',
         headers: { 'Content-Type': contentType || 'application/octet-stream' },
         body: body
@@ -435,12 +486,6 @@ FAR.FsClient.prototype.stopWatching = function () {
 // Статические хелперы
 // ============================================================
 
-/**
- * Войти и получить токен.
- * При ошибке кидает Error со свойством .status, если сервер ответил HTTP-кодом.
- *
- * @returns {Promise<{ok:boolean, token:string, user:string, issuedAt:number, expiresAt:number, ttlMs:number}>}
- */
 FAR.FsClient.login = async function (baseUrl, user, pass) {
     const url = String(baseUrl || '').replace(/\/+$/, '') + '/api/login';
 
@@ -449,7 +494,7 @@ FAR.FsClient.login = async function (baseUrl, user, pass) {
         res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',   // ← чтобы Set-Cookie сработал
+            credentials: 'include',
             body: JSON.stringify({ user: user, pass: pass || '' })
         });
     } catch (netErr) {
@@ -468,25 +513,17 @@ FAR.FsClient.login = async function (baseUrl, user, pass) {
     return data;
 };
 
-/**
- * Отозвать токен.
- */
 FAR.FsClient.logout = async function (baseUrl, token) {
     const url = String(baseUrl || '').replace(/\/+$/, '') + '/api/logout';
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',   // ← чтобы Set-Cookie (Max-Age=0) сработал
+        credentials: 'include',
         body: JSON.stringify({ token: token })
     });
     return res.ok;
 };
 
-/**
- * Построить прямой URL к файлу из share.
- * Если задан token — добавляет ?token=... в URL
- * (браузер не умеет Authorization в ссылках).
- */
 FAR.FsClient.prototype.directUrl = function (share, relPath, opts) {
     opts = opts || {};
     const encoded = (relPath || '').split('/').map(encodeURIComponent).join('/');

@@ -2,15 +2,12 @@
 // Загрузка файлов и папок в текущую директорию панели.
 // ============================================================
 //
-// ЛЕНИВАЯ ЗАГРУЗКА: после операции перечитываем директорию
-// через FAR.reloadPanel(side), а не перерисовываем из
-// глобального fileIndex.
+// Каждый вызов uploadFilesToPath создаёт СВОЙ инстанс прогресса —
+// параллельные загрузки не конфликтуют.
 //
 // ВАЖНО: файлы записываются ОДНИМ запросом PUT /api/write
-// (FsClient.putAttachment). Раньше делалось два запроса:
-// put(пустой_doc) + putAttachment. Из-за этого при превышении
-// квоты (507) на диске оставался пустой файл. Теперь либо
-// файл создан полностью, либо не создан вовсе.
+// (FsClient.putAttachment). Атомарность: либо файл создан
+// полностью, либо не создан вовсе.
 
 FAR.uploadFilesToPath = async function(files, targetPath) {
     if (!FAR.ensureDb()) return { ok: 0, err: 0 };
@@ -23,7 +20,6 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
     const baseTarget = FAR.normPath(targetPath);
     const targetName = baseTarget === '' ? 'корень' : baseTarget;
 
-    // Собираем список папок, которые нужно создать
     const foldersToCreate = new Set();
     for (const f of files) {
         const rel = FAR.normPath(f.relativePath || '');
@@ -35,7 +31,7 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
 
     const totalSteps = foldersToCreate.size + files.length;
 
-    FAR.startProgress(
+    const prog = FAR.startProgress(
         '📤',
         `Загрузка ${files.length} файлов${foldersToCreate.size ? ` + ${foldersToCreate.size} папок` : ''} в "${targetName}"`,
         totalSteps,
@@ -46,17 +42,15 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
 
     let ok = 0, err = 0, step = 0;
 
-    // ============================================================
     // 1. Создание папок (сначала родительские — сортировка по длине пути)
-    // ============================================================
     const sortedFolders = Array.from(foldersToCreate).sort((a, b) => a.length - b.length);
     for (const relFolder of sortedFolders) {
-        if (FAR.progress.cancelled) break;
+        if (prog.state.cancelled) break;
         step++;
         const fullPath = FAR.normPath(baseTarget === '' ? relFolder : baseTarget + '/' + relFolder);
         const docId = 'd:' + encodeURIComponent(fullPath);
         const folderName = relFolder.split('/').pop();
-        FAR.updateProgress(step - 1, totalSteps, `📁 ${fullPath}`, err);
+        prog.update(step - 1, totalSteps, `📁 ${fullPath}`, err);
 
         try {
             let rev = null;
@@ -65,24 +59,16 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
             const doc = { _id: docId, type: 'folder', path: fullPath, name: folderName, mtime: Date.now() };
             if (rev) doc._rev = rev;
             await ctx.db.put(doc);
-            FAR.progressLog(`📁 ✅ ${fullPath}`, 'ok');
+            prog.log(`📁 ✅ ${fullPath}`, 'ok');
         } catch (e) {
             err++;
-            FAR.progressLog(`📁 ❌ ${fullPath}: ${e.message}`, 'err');
+            prog.log(`📁 ❌ ${fullPath}: ${e.message}`, 'err');
         }
     }
 
-    // ============================================================
-    // 2. Загрузка файлов.
-    //
-    // Файл записывается ОДНИМ запросом через putAttachment.
-    // Это гарантирует атомарность:
-    //   • если PUT /api/write прошёл — на диске полный файл;
-    //   • если нет (например, 507 quota) — файла нет вообще;
-    //     пустых "заглушек" на диске не остаётся.
-    // ============================================================
+    // 2. Загрузка файлов — одним запросом через putAttachment
     for (let i = 0; i < files.length; i++) {
-        if (FAR.progress.cancelled) break;
+        if (prog.state.cancelled) break;
         const f = files[i]; step++;
         const rel = FAR.normPath(f.relativePath || '');
         const parts = [];
@@ -90,27 +76,24 @@ FAR.uploadFilesToPath = async function(files, targetPath) {
         if (rel) parts.push(rel);
         parts.push(f.name);
         const cleanPath = FAR.normPath(parts.filter(Boolean).join('/'));
-        FAR.updateProgress(step - 1, totalSteps, cleanPath, err);
-        FAR.progressLog(`↑ ${cleanPath} (${FAR.formatSize(f.blob.size)})`, 'info');
+        prog.update(step - 1, totalSteps, cleanPath, err);
+        prog.log(`↑ ${cleanPath} (${FAR.formatSize(f.blob.size)})`, 'info');
 
         try {
             const contentType = f.contentType || f.blob.type || 'application/octet-stream';
             const docId = 'f:' + encodeURIComponent(cleanPath);
-
-            // Один запрос — запись всего файла.
             await ctx.db.putAttachment(docId, 'b', null, f.blob, contentType);
-
             ok++;
-            FAR.progressLog(`✅ ${cleanPath}`, 'ok');
+            prog.log(`✅ ${cleanPath}`, 'ok');
         } catch (e) {
             err++;
-            FAR.progressLog(`❌ ${f.name}: ${e.message}`, 'err');
+            prog.log(`❌ ${f.name}: ${e.message}`, 'err');
         }
-        FAR.updateProgress(step, totalSteps, cleanPath, err);
+        prog.update(step, totalSteps, cleanPath, err);
     }
 
-    FAR.finishProgress(err);
-    FAR.progressLog(`━━━ Готово: ${ok} файлов, ${foldersToCreate.size} папок, ${err} ошибок`, ok > 0 ? 'ok' : 'err');
+    prog.finish(err);
+    prog.log(`━━━ Готово: ${ok} файлов, ${foldersToCreate.size} папок, ${err} ошибок`, ok > 0 ? 'ok' : 'err');
 
     await FAR.reloadPanel(side);
     FAR.setStatus(`✅ Загружено: ${ok} файлов, ${err} ошибок`);

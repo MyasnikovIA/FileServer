@@ -1,15 +1,6 @@
 // ============================================================
 // 47-fullscreen.js — управление полноэкранным режимом
 // ============================================================
-//
-// Возможности:
-//   • кнопка «⛶ Fullscreen» в тулбаре (панельный режим);
-//   • кнопка «⛶ Fullscreen» в трее панели задач (оконный режим);
-//   • F11 — переключатель;
-//   • автоматическая попытка войти в fullscreen при входе
-//     в оконный режим (клик по «🖥 Рабочий стол»);
-//   • после перезагрузки, если пользователь ранее был
-//     в fullscreen — восстановление при ПЕРВОМ user gesture.
 
 FAR.FS = FAR.FS || {};
 
@@ -58,23 +49,50 @@ FAR.FS._exit = function () {
 // Публичное API
 // ------------------------------------------------------------
 
+/**
+ * Пытается войти в полноэкранный режим.
+ *
+ * ВАЖНО: requestFullscreen требует user gesture. Если вызов
+ * происходит из setTimeout / автостарта — браузер бросит:
+ *   • Chrome:   TypeError: Permissions check failed
+ *   • Firefox:  NotAllowedError
+ *   • Safari:   NotAllowedError
+ * Это ожидаемое поведение, шуметь в консоль не надо.
+ *
+ * Автовосстановление после F5 сделано правильно: через
+ * _installAutoRestore() ниже — обработчик вешается на первый
+ * клик/нажатие. Здесь просто молча возвращаем false.
+ */
 FAR.FS.enter = async function () {
     if (!FAR.FS._isSupported()) return false;
     if (FAR.FS._isActive()) return true;
+
     try {
         await FAR.FS._request();
         return true;
     } catch (e) {
-        if (!e || e.name !== 'NotAllowedError') {
-            console.warn('[FS] enter failed:', e && e.name, e && e.message);
+        const name = e && e.name;
+        const msg  = (e && e.message) || '';
+
+        // Все варианты "нельзя без user gesture":
+        //   NotAllowedError                                  — стандарт
+        //   TypeError: Permissions check failed              — Chrome
+        //   TypeError: ... user gesture ...                  — Chrome (variants)
+        const isGestureError =
+            name === 'NotAllowedError' ||
+            (name === 'TypeError' && /permission|user gesture|not allowed/i.test(msg));
+
+        if (!isGestureError) {
+            // Настоящая ошибка (нет API, политика sandbox и т.п.) — логируем
+            console.warn('[FS] enter failed:', name, msg);
         }
+
         return false;
     }
 };
 
 FAR.FS.exit = async function () {
     if (!FAR.FS._isActive()) return true;
-    // Флаг снимется автоматически через _watchState
     try {
         await FAR.FS._exit();
         return true;
@@ -108,11 +126,9 @@ FAR.FS._loadWanted = function () {
 // ------------------------------------------------------------
 // Слежение за состоянием
 // ------------------------------------------------------------
-// ВАЖНО: Теперь сохраняем и `true`, и `false`.
 
 FAR.FS._watchState = function () {
     const onChange = function () {
-        // Сохраняем актуальное состояние (включено/выключено)
         FAR.FS._saveWanted(FAR.FS._isActive());
         FAR.FS._updateAllButtons();
     };
@@ -125,8 +141,13 @@ FAR.FS._watchState = function () {
 // ------------------------------------------------------------
 // Автовосстановление после перезагрузки
 // ------------------------------------------------------------
+//
+// Правильный способ: дождаться ПЕРВОГО пользовательского жеста
+// и уже из него вызвать requestFullscreen. Здесь мы подписываемся
+// на click/keydown/touchstart/pointerdown в capture-фазе, чтобы
+// поймать даже клики, которые что-то отменяют/останавливают.
 FAR.FS._installAutoRestore = function () {
-    if (!FAR.FS._loadWanted()) return; // Пользователь отключил, не навязываем
+    if (!FAR.FS._loadWanted()) return;   // пользователь отключил — не навязываем
     if (FAR.FS._isActive()) return;
     if (!FAR.FS._isSupported()) return;
 
@@ -244,7 +265,10 @@ document.addEventListener('keydown', function (e) {
 // ------------------------------------------------------------
 // Обёртка над FAR.WM.enter
 // ------------------------------------------------------------
-
+//
+// При входе в WM НЕ пытаемся автоматически запросить fullscreen —
+// это будет "не user gesture", браузер заблокирует.
+// Обновляем только кнопку в трее.
 (function wrapWMEnter() {
     if (typeof FAR.WM === 'undefined' || typeof FAR.WM.enter !== 'function') {
         setTimeout(wrapWMEnter, 50);
@@ -256,7 +280,6 @@ document.addEventListener('keydown', function (e) {
     const origEnter = FAR.WM.enter;
     FAR.WM.enter = function () {
         const r = origEnter.apply(this, arguments);
-        try { FAR.FS.enter().catch(function () {}); } catch (e) {}
 
         setTimeout(function () {
             FAR.FS.installWmTrayButton();

@@ -2,10 +2,7 @@
 // Скачивание выделенного одним ZIP-архивом.
 // ============================================================
 //
-// ЛЕНИВАЯ ЗАГРУЗКА:
-//   Для папок содержимое берётся рекурсивным обходом
-//   FAR.listRecursiveFromSide(side, folderPath), а не из
-//   глобального fileIndex.
+// Свой инстанс прогресса.
 
 FAR.downloadSelectedAsZip = async function () {
     if (!FAR.ensureDb()) return;
@@ -17,9 +14,7 @@ FAR.downloadSelectedAsZip = async function () {
     const selected = FAR.getSelectedItemsFromActivePanel();
     if (selected.length === 0) { FAR.toast('Ничего не выбрано', 'warning'); return; }
 
-    // ============================================================
     // 1. Собираем список файлов для архива
-    // ============================================================
     const toZip = [];
 
     for (const sel of selected) {
@@ -54,17 +49,17 @@ FAR.downloadSelectedAsZip = async function () {
         ? FAR.sanitizeFileName(selected[0].item.name) + '.zip'
         : 'files.zip';
 
-    FAR.startProgress('🗜️', `Упаковка ${toZip.length} файлов в ${zipName}`, toZip.length, function () {});
+    const prog = FAR.startProgress('🗜️', `Упаковка ${toZip.length} файлов в ${zipName}`, toZip.length, function () {});
 
     let ok = 0, err = 0;
     const zip = new JSZip();
 
     for (let i = 0; i < toZip.length; i++) {
-        if (FAR.progress.cancelled) break;
+        if (prog.state.cancelled) break;
         const zipPath = toZip[i].zipPath;
         const item = toZip[i].item;
-        FAR.updateProgress(i, toZip.length, zipPath, err);
-        FAR.progressLog(`🗜️ + ${zipPath}`, 'info');
+        prog.update(i, toZip.length, zipPath, err);
+        prog.log(`🗜️ + ${zipPath}`, 'info');
         try {
             const res = await FAR.readFileBodyFromSide(side, item);
             zip.file(zipPath, res.data, {
@@ -73,49 +68,45 @@ FAR.downloadSelectedAsZip = async function () {
                 compressionOptions: { level: 6 }
             });
             ok++;
-            FAR.progressLog(`✅ ${zipPath} (${FAR.formatSize(res.data.length)})`, 'ok');
+            prog.log(`✅ ${zipPath} (${FAR.formatSize(res.data.length)})`, 'ok');
         } catch (e) {
             err++;
-            FAR.progressLog(`❌ ${zipPath}: ${e.message}`, 'err');
+            prog.log(`❌ ${zipPath}: ${e.message}`, 'err');
         }
-        FAR.updateProgress(i + 1, toZip.length, zipPath, err);
+        prog.update(i + 1, toZip.length, zipPath, err);
     }
 
     if (ok === 0) {
-        FAR.finishProgress(err);
-        FAR.progressLog(`━━━ Нечего сохранять`, 'err');
+        prog.finish(err);
+        prog.log(`━━━ Нечего сохранять`, 'err');
         FAR.setStatus('❌ Архив пуст');
         FAR.toast('Архив пуст', 'error');
         return;
     }
 
-    FAR.progressLog(`📦 Генерация архива…`, 'info');
-    document.getElementById('progressCurrent').textContent = 'Генерация архива…';
+    prog.log(`📦 Генерация архива…`, 'info');
+    prog.update(toZip.length, toZip.length, 'Генерация архива…', err);
 
     try {
+        // Прогресс генерации zip - через тот же инстанс
         const blob = await zip.generateAsync(
             { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
             function(metadata) {
                 const pct = Math.round(metadata.percent);
-                document.getElementById('progressPercent').textContent = pct + '%';
-                document.getElementById('progressFill').style.width = pct + '%';
-                document.getElementById('miniPercent').textContent = pct + '%';
-                document.getElementById('miniFill').style.width = pct + '%';
-                document.getElementById('progressCurrent').textContent =
-                    `Генерация архива… ${pct}%`;
+                prog.update(toZip.length, toZip.length, 'Генерация архива… ' + pct + '%', err);
             }
         );
 
         FAR.saveBlobAs(blob, zipName);
-        FAR.progressLog(`✅ ${zipName} (${FAR.formatSize(blob.size)})`, 'ok');
-        FAR.progressLog(`━━━ Готово: ${ok} файлов упаковано, ${err} ошибок`, ok > 0 ? 'ok' : 'err');
+        prog.log(`✅ ${zipName} (${FAR.formatSize(blob.size)})`, 'ok');
+        prog.log(`━━━ Готово: ${ok} файлов упаковано, ${err} ошибок`, ok > 0 ? 'ok' : 'err');
 
-        FAR.finishProgress(err);
+        prog.finish(err);
         FAR.setStatus(`✅ Архив ${zipName}: ${ok} файлов`);
         FAR.toast(`Архив ${zipName} сохранён`, 'success');
     } catch (e) {
-        FAR.progressLog(`❌ Ошибка генерации архива: ${e.message}`, 'err');
-        FAR.finishProgress(err + 1);
+        prog.log(`❌ Ошибка генерации архива: ${e.message}`, 'err');
+        prog.finish(err + 1);
         FAR.setStatus('❌ Ошибка архива');
         FAR.toast('Ошибка генерации архива: ' + e.message, 'error');
     }

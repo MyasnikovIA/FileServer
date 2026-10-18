@@ -4,9 +4,24 @@
     z-index: 99999;                 /* ВЫШЕ окон WM (5000+) */
     display: flex; align-items: center; justify-content: center;
     padding: 20px;
-    pointer-events: none;           /* окна за оверлеем кликабельны */
+    pointer-events: none;           /* окна/иконки за оверлеем кликабельны */
 }
 .progress-overlay.hidden { display: none; }
+
+/* Контейнер всех карточек прогресса — вертикальный стек */
+.progress-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+    max-height: 100%;
+    overflow-y: auto;
+    pointer-events: none;
+}
+.progress-stack:empty {
+    /* если карточек нет — не мешаем вообще */
+    display: none;
+}
 
 .progress-content {
     pointer-events: auto;           /* сама карточка перехватывает клики */
@@ -15,6 +30,12 @@
     display: flex; flex-direction: column;
     border: 1px solid #45475a;
     box-shadow: 0 10px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(137,180,250,0.15);
+}
+
+/* Свёрнутая карточка (только заголовок) */
+.progress-content.progress-minimized .progress-body,
+.progress-content.progress-minimized .progress-footer {
+    display: none;
 }
 
 .progress-header {
@@ -89,36 +110,3 @@
 .progress-footer .btn-close { background: #89b4fa; color: #1e1e2e; }
 .progress-footer .btn-close:hover { background: #74c7ec; }
 .progress-footer button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.progress-mini {
-    position: fixed; bottom: 20px; right: 20px;
-    background: #1e1e2e; border: 1px solid #89b4fa;
-    border-radius: 10px; padding: 10px 14px;
-    min-width: 260px; max-width: 360px;
-    z-index: 99999;                 /* ВЫШЕ окон WM */
-    box-shadow: 0 6px 25px rgba(0,0,0,0.6);
-    cursor: pointer; transition: transform 0.2s;
-}
-.progress-mini:hover { transform: translateY(-3px); }
-.progress-mini.hidden { display: none; }
-.progress-mini .mini-title {
-    color: #89b4fa; font-size: 12px; font-weight: bold;
-    display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
-}
-.progress-mini .mini-title .mini-close {
-    margin-left: auto; color: #a6adc8; font-size: 14px;
-}
-.progress-mini .mini-title .mini-close:hover { color: #f38ba8; }
-.progress-mini .mini-bar {
-    width: 100%; height: 4px; background: #313244;
-    border-radius: 2px; overflow: hidden; margin-bottom: 5px;
-}
-.progress-mini .mini-bar .mini-fill {
-    height: 100%; width: 0%;
-    background: linear-gradient(90deg, #89b4fa, #a6e3a1);
-    transition: width 0.25s;
-}
-.progress-mini .mini-stats {
-    color: #a6adc8; font-size: 11px;
-    display: flex; justify-content: space-between;
-}

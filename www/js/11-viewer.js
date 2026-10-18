@@ -1,34 +1,11 @@
 // ============================================================
 // Универсальный просмотрщик файлов + навигация ◀ / ▶
 // ============================================================
-// Поддерживает:
-//   • JSDOS-игры (.jsdos)
-//   • NES-ROM (.nes) через JSNES
-//   • EmulatorJS (snes, n64, gba, psx, sega и т.д.)
-//   • PDF (PDFObject)
-//   • Панорамы 360° (Pannellum)
-//   • Изображения (jpg/png/gif/webp/svg/bmp/ico)
-//   • Текст (txt/md/json/xml/csv/log/...)
-//   • Бинарные (hex-превью)
-//
-// В мульти-БД режиме вторым аргументом приходит side ('left'/'right'),
-// чтобы читать тело файла из БД ИМЕННО этой панели, а не активной.
-//
-// Навигация по файлам панели:
-//   • состояние хранится в FAR._viewerSide / FAR._viewerIndex;
-//   • кнопки #viewerPrevBtn/#viewerNextBtn, #panoPrevBtn/#panoNextBtn,
-//     #pdfPrevBtn/#pdfNextBtn, #jsdosPrevBtn/#jsdosNextBtn,
-//     #nesPrevBtn/#nesNextBtn, #emuPrevBtn/#emuNextBtn;
-//   • переключаются только файлы (папки пропускаются);
-//   • на границах списка соответствующая кнопка скрывается.
-// ============================================================
 
-// --- Состояние навигации просмотрщика ---
-FAR._viewerSide  = null;   // 'left' | 'right' — панель, из которой открыт файл
-FAR._viewerIndex = -1;     // индекс открытого файла в FAR.side[side].files
-FAR._viewerToken = 0;      // токен для отмены устаревших открытий
+FAR._viewerSide  = null;
+FAR._viewerIndex = -1;
+FAR._viewerToken = 0;
 
-// --- Все модалки-просмотрщики и их кнопки навигации ---
 FAR.VIEWER_MODALS = [
     { modal: 'viewerModal',            prev: 'viewerPrevBtn', next: 'viewerNextBtn' },
     { modal: 'panoramaViewerModal',    prev: 'panoPrevBtn',   next: 'panoNextBtn'   },
@@ -40,10 +17,6 @@ FAR.VIEWER_MODALS = [
     { modal: 'emulatorViewerModal',    prev: 'emuPrevBtn',    next: 'emuNextBtn'    }
 ];
 
-/**
- * Проверяет, что нужный модуль-просмотрщик загружен.
- * Если нет — пишет понятную ошибку в консоль и возвращает false.
- */
 FAR._viewerEnsureFn = function (name) {
     if (typeof FAR[name] === 'function') return true;
     console.error(
@@ -54,10 +27,6 @@ FAR._viewerEnsureFn = function (name) {
     return false;
 };
 
-/**
- * Ищет ближайший файл (не папку) в направлении dir (-1 | +1)
- * начиная с позиции fromIndex. Возвращает индекс или -1.
- */
 FAR._viewerFindFileIndex = function (side, fromIndex, dir) {
     const ctx = FAR.side[side];
     const files = ctx ? ctx.files : null;
@@ -72,9 +41,6 @@ FAR._viewerFindFileIndex = function (side, fromIndex, dir) {
     return -1;
 };
 
-/**
- * Пытается определить индекс элемента item в списке панели side.
- */
 FAR._viewerResolveIndex = function (side, item) {
     if (!side || !item) return -1;
     const ctx = FAR.side[side];
@@ -96,10 +62,6 @@ FAR._viewerResolveIndex = function (side, item) {
     return -1;
 };
 
-/**
- * Обновляет видимость кнопок ◀ / ▶ во ВСЕХ модалках-просмотрщиках.
- * Модалки, которых нет в DOM, молча пропускаются.
- */
 FAR._viewerUpdateNavButtons = function () {
     const side  = FAR._viewerSide;
     const index = FAR._viewerIndex;
@@ -120,11 +82,6 @@ FAR._viewerUpdateNavButtons = function () {
     });
 };
 
-/**
- * Закрывает все модалки-просмотрщики (не трогая их внутреннее
- * состояние — им занимаются соответствующие close*).
- * Используется только как страховка перед открытием следующего файла.
- */
 FAR._viewerCloseAll = function () {
     try { if (typeof FAR.closeViewer         === 'function') FAR.closeViewer();         } catch (e) {}
     try { if (typeof FAR.closePanoramaViewer === 'function') FAR.closePanoramaViewer(); } catch (e) {}
@@ -136,17 +93,6 @@ FAR._viewerCloseAll = function () {
     try { if (typeof FAR.closeEmulatorViewer === 'function') FAR.closeEmulatorViewer(); } catch (e) {}
 };
 
-/**
- * Переключает просмотрщик на предыдущий (-1) или следующий (+1)
- * файл в текущей панели. Папки пропускаются.
- *
- * Логика сквозная: неважно, каким просмотрщиком открыт текущий файл.
- * Если следующий файл — картинка, откроется обычный просмотрщик;
- * если панорама — панорамный, и т.д. Выбор делает openFile().
- *
- * После открытия синхронизирует выделение и курсор в панели side,
- * чтобы фон «следовал» за просмотрщиком.
- */
 FAR.viewerNavigate = async function (dir) {
     const side  = FAR._viewerSide;
     const index = FAR._viewerIndex;
@@ -162,31 +108,20 @@ FAR.viewerNavigate = async function (dir) {
     const item  = files[targetIdx];
     if (!item) return;
 
-    // Запоминаем новую позицию ДО открытия,
-    // чтобы кнопки сразу отрисовались корректно
     const prevSide  = FAR._viewerSide;
     const prevIndex = FAR._viewerIndex;
     FAR._viewerSide  = side;
     FAR._viewerIndex = targetIdx;
 
-    // Закрываем все модалки-просмотрщики. Это важно, когда мы
-    // уходим с панорамы/PDF/эмулятора на другой тип файла —
-    // иначе старая модалка останется висеть.
     FAR._viewerCloseAll();
 
-    // openFile сам решит, какой просмотрщик использовать
     try {
         await FAR.openFile(item, side, targetIdx);
-
-        // Синхронизируем выделение и курсор в панели-источнике.
-        // Вызываем после openFile — на случай, если openFile
-        // внутри себя что-то перерисовал в панели.
         if (typeof FAR._selectFileInPanel === 'function') {
             FAR._selectFileInPanel(item, side);
         }
     } catch (e) {
         console.error('viewerNavigate:', e);
-        // Откат к прежней позиции при ошибке
         FAR._viewerSide  = prevSide;
         FAR._viewerIndex = prevIndex;
         FAR._viewerUpdateNavButtons();
@@ -194,10 +129,6 @@ FAR.viewerNavigate = async function (dir) {
     }
 };
 
-/**
- * Читает тело файла из БД нужной стороны.
- * Если readFileBodyFromSide недоступен — падает на старый readFileBody.
- */
 FAR._viewerReadBody = async function (side, item) {
     if (typeof FAR.readFileBodyFromSide === 'function') {
         return FAR.readFileBodyFromSide(side, item);
@@ -208,13 +139,6 @@ FAR._viewerReadBody = async function (side, item) {
     throw new Error('Ни readFileBodyFromSide, ни readFileBody не загружены');
 };
 
-/**
- * Открывает файл в подходящем просмотрщике.
- *
- * @param {Object} item    — элемент из fileIndex (file, не folder)
- * @param {string} [side]  — 'left' | 'right' (по умолчанию активная панель)
- * @param {number} [index] — индекс в FAR.side[side].files (если известен)
- */
 FAR.openFile = async function (item, side, index) {
     side = side || FAR.activePanel;
 
@@ -225,30 +149,23 @@ FAR.openFile = async function (item, side, index) {
         return;
     }
 
-    // Запоминаем сторону и индекс для навигации
     FAR._viewerSide = side;
     FAR._viewerIndex = (typeof index === 'number' && index >= 0)
         ? index
         : FAR._viewerResolveIndex(side, item);
 
-    // Уникальный токен текущего открытия — защита от гонок при
-    // быстром перещёлкивании ◀/▶, когда старый openFile ещё не завершился.
     const myToken = ++FAR._viewerToken;
 
-    // ===== ПРОВЕРКА 1: JSDOS =====
     try {
         if (typeof FAR.isJsdos === 'function' && FAR.isJsdos(item)) {
             if (!FAR._viewerEnsureFn('openJsdosViewer')) return;
             await FAR.openJsdosViewer(item, side);
-            if (myToken !== FAR._viewerToken) return; // устарело
+            if (myToken !== FAR._viewerToken) return;
             FAR._viewerUpdateNavButtons();
             return;
         }
-    } catch (e) {
-        console.warn('Ошибка проверки JSDOS:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки JSDOS:', e); }
 
-    // ===== ПРОВЕРКА 2: NES =====
     try {
         if (typeof FAR.isNes === 'function' && FAR.isNes(item)) {
             if (!FAR._viewerEnsureFn('openNesViewer')) return;
@@ -257,11 +174,8 @@ FAR.openFile = async function (item, side, index) {
             FAR._viewerUpdateNavButtons();
             return;
         }
-    } catch (e) {
-        console.warn('Ошибка проверки NES:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки NES:', e); }
 
-    // ===== ПРОВЕРКА 3: EmulatorJS =====
     try {
         if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) {
             if (!FAR._viewerEnsureFn('openEmulatorViewer')) return;
@@ -270,11 +184,8 @@ FAR.openFile = async function (item, side, index) {
             FAR._viewerUpdateNavButtons();
             return;
         }
-    } catch (e) {
-        console.warn('Ошибка проверки EmulatorJS:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки EmulatorJS:', e); }
 
-    // ===== ПРОВЕРКА 4а: MP3 / аудио =====
     try {
         if (typeof FAR.isMp3 === 'function' && FAR.isMp3(item)) {
             if (!FAR._viewerEnsureFn('openMp3Viewer')) return;
@@ -283,11 +194,8 @@ FAR.openFile = async function (item, side, index) {
             FAR._viewerUpdateNavButtons();
             return;
         }
-    } catch (e) {
-        console.warn('Ошибка проверки MP3:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки MP3:', e); }
 
-    // ===== ПРОВЕРКА 4б: Видео =====
     try {
         if (typeof FAR.isVideo === 'function' && FAR.isVideo(item)) {
             if (!FAR._viewerEnsureFn('openVideoViewer')) return;
@@ -296,11 +204,8 @@ FAR.openFile = async function (item, side, index) {
             FAR._viewerUpdateNavButtons();
             return;
         }
-    } catch (e) {
-        console.warn('Ошибка проверки видео:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки видео:', e); }
 
-    // ===== ПРОВЕРКА 4: PDF =====
     try {
         if (typeof FAR.isPdf === 'function' && FAR.isPdf(item)) {
             if (!FAR._viewerEnsureFn('openPdfViewer')) return;
@@ -309,15 +214,12 @@ FAR.openFile = async function (item, side, index) {
             FAR._viewerUpdateNavButtons();
             return;
         }
-    } catch (e) {
-        console.warn('Ошибка проверки PDF:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки PDF:', e); }
 
-    // ===== ПРОВЕРКА 5: Панорама =====
     try {
         if (typeof FAR.isPanorama === 'function') {
             const isPano = await FAR.isPanorama(item, side);
-            if (myToken !== FAR._viewerToken) return; // устарело
+            if (myToken !== FAR._viewerToken) return;
             if (isPano) {
                 if (!FAR._viewerEnsureFn('openPanoramaViewer')) return;
                 await FAR.openPanoramaViewer(item, side);
@@ -326,11 +228,8 @@ FAR.openFile = async function (item, side, index) {
                 return;
             }
         }
-    } catch (e) {
-        console.warn('Ошибка проверки на панораму:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки на панораму:', e); }
 
-    // ===== ПРОВЕРКА 6: HTML-документ =====
     try {
         if (typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(item)) {
             if (typeof FAR.openBrowserFromItem === 'function') {
@@ -339,11 +238,8 @@ FAR.openFile = async function (item, side, index) {
                 return;
             }
         }
-    } catch (e) {
-        console.warn('Ошибка проверки HTML:', e);
-    }
+    } catch (e) { console.warn('Ошибка проверки HTML:', e); }
 
-    // === Обычный просмотрщик ===
     const modal = document.getElementById('viewerModal');
     const title = document.getElementById('viewerTitle');
     const body  = document.getElementById('viewerBody');
@@ -364,7 +260,7 @@ FAR.openFile = async function (item, side, index) {
 
     try {
         const res = await FAR._viewerReadBody(side, item);
-        if (myToken !== FAR._viewerToken) return; // устарело
+        if (myToken !== FAR._viewerToken) return;
 
         const data = res.data;
         const contentType = res.contentType || item.contentType || 'application/octet-stream';
@@ -422,34 +318,39 @@ FAR.closeViewerOutside = function (e) {
     if (e.target === e.currentTarget) FAR.closeViewer();
 };
 
+/**
+ * Скачивание текущего файла — использует СВОЙ инстанс прогресса,
+ * чтобы не конфликтовать с параллельно идущими copy/move.
+ */
 FAR.downloadCurrentFile = async function () {
     if (!FAR.currentFileData) {
         FAR.toast('Нет данных', 'warning');
         return;
     }
 
-    FAR.startProgress(
+    const prog = FAR.startProgress(
         '📥',
         `Скачивание "${FAR.currentFileName}" (${FAR.formatSize(FAR.currentFileData.length)})`,
         1,
         function () {}
     );
-    FAR.progressLog(`📥 Подготовка ${FAR.currentFileName}`, 'info');
-    FAR.updateProgress(0, 1, FAR.currentFileName, 0);
+
+    prog.log(`📥 Подготовка ${FAR.currentFileName}`, 'info');
+    prog.update(0, 1, FAR.currentFileName, 0);
 
     try {
         const blob = new Blob([FAR.currentFileData], { type: FAR.currentFileType });
         FAR.saveBlobAs(blob, FAR.sanitizeFileName(FAR.currentFileName));
 
-        FAR.updateProgress(1, 1, FAR.currentFileName, 0);
-        FAR.progressLog(`✅ ${FAR.currentFileName} — сохранено`, 'ok');
-        FAR.finishProgress(0);
-        FAR.progressLog('━━━ Готово', 'ok');
+        prog.update(1, 1, FAR.currentFileName, 0);
+        prog.log(`✅ ${FAR.currentFileName} — сохранено`, 'ok');
+        prog.finish(0);
+        prog.log('━━━ Готово', 'ok');
 
         FAR.toast('Файл сохранён', 'success');
     } catch (e) {
-        FAR.progressLog(`❌ ${FAR.currentFileName}: ${e.message}`, 'err');
-        FAR.finishProgress(1);
+        prog.log(`❌ ${FAR.currentFileName}: ${e.message}`, 'err');
+        prog.finish(1);
         FAR.toast('Ошибка скачивания: ' + e.message, 'error');
     }
 };

@@ -1,22 +1,8 @@
 // ============================================================
 // Сохранение/загрузка состояний эмулятора EmulatorJS в FileBD
 // ============================================================
-//
-// Файлы состояний лежат рядом с ROM:
-//   <директория-ROM>/.saves/<базовое-имя-ROM>.state
-// Пример: /games/snes/doom.sfc → games/snes/doom/.saves/doom.state
-//
-// Модуль подгружается динамически из FAR.openEmulatorViewer()
-// ДО вызова FAR._loadEmulatorLoader(), чтобы:
-//   - loader.js увидел window.EJS_onSaveState / EJS_onLoadState
-//   - если по какой-то причине loader.js уже отработал,
-//     хук всё равно зарегистрировался через EJS_emulator.on(...)
 
 FAR.EMU_STATE_SAVE_DIR = '.saves';
-
-// ============================================================
-// 1. Путь .state для данного ROM
-// ============================================================
 
 FAR._emuStatePathForRom = function (romPath) {
     const p = FAR.normPath(romPath);
@@ -34,10 +20,6 @@ FAR._emuStatePathForRom = function (romPath) {
 
     return parts.join('/');
 };
-
-// ============================================================
-// 2. Чтение/запись .state в PouchDB
-// ============================================================
 
 FAR._emuStateSaveToDb = async function (statePath, bytes) {
     if (!FAR.db) throw new Error('Нет подключения к БД');
@@ -115,10 +97,9 @@ FAR._emuStateLoadFromDb = async function (statePath) {
     }
 };
 
-// ============================================================
-// 3. Хуки EmulatorJS
-// ============================================================
-
+/**
+ * Сохранение состояния эмулятора. Использует свой инстанс прогресса.
+ */
 FAR._emuStateOnSave = async function (data) {
     if (!FAR.db || !FAR._emulatorCurrentItem) return 0;
 
@@ -131,25 +112,24 @@ FAR._emuStateOnSave = async function (data) {
         return 1;
     }
 
-    FAR.startProgress('💾', 'Сохранение состояния в БД', 1, null);
-    FAR.progressLog(`ROM: ${romPath}`, 'info');
-    FAR.progressLog(`State: ${statePath} (${FAR.formatSize(bytes.length)})`, 'info');
+    const prog = FAR.startProgress('💾', 'Сохранение состояния в БД', 1, null);
+    prog.log(`ROM: ${romPath}`, 'info');
+    prog.log(`State: ${statePath} (${FAR.formatSize(bytes.length)})`, 'info');
 
     try {
         await FAR._emuStateSaveToDb(statePath, bytes);
-        FAR.progressLog('✅ Состояние записано в FileBD', 'ok');
-        FAR.updateProgress(1, 1, statePath, 0);
-        FAR.finishProgress(0);
+        prog.log('✅ Состояние записано в FileBD', 'ok');
+        prog.update(1, 1, statePath, 0);
+        prog.finish(0);
         FAR.setStatus('✅ Состояние сохранено: ' + statePath);
         FAR.toast('Состояние сохранено в БД', 'success');
     } catch (e) {
         console.error('EJS_onSaveState:', e);
-        FAR.progressLog('❌ ' + e.message, 'err');
-        FAR.finishProgress(1);
+        prog.log('❌ ' + e.message, 'err');
+        prog.finish(1);
         FAR.toast('Ошибка сохранения состояния: ' + e.message, 'error');
     }
 
-    // >0 → EmulatorJS не будет создавать Blob и вызывать download
     return 1;
 };
 
@@ -190,22 +170,13 @@ FAR._emuStateOnLoad = async function () {
     return 1;
 };
 
-/**
- * Гибридная установка хуков.
- * - выставляет window.EJS_onSaveState / EJS_onLoadState (для loader.js)
- * - если window.EJS_emulator уже существует — сразу подписывается на
- *   события через его публичный API (страховка от гонки с loader.js)
- * - если EJS_emulator появится позже — периодически проверяем
- */
 FAR._installEmulatorStateHooks = function () {
     if (window._farEmuStateHooksInstalled) return;
     window._farEmuStateHooksInstalled = true;
 
-    // 1. Классический путь — для loader.js
     window.EJS_onSaveState = FAR._emuStateOnSave;
     window.EJS_onLoadState = FAR._emuStateOnLoad;
 
-    // 2. Страховка: если EmulatorJS уже создан — подписываемся напрямую
     const attachNow = function () {
         if (!window.EJS_emulator) return false;
         if (window.EJS_emulator._farStateHooksAttached) return true;
@@ -223,7 +194,6 @@ FAR._installEmulatorStateHooks = function () {
 
     if (attachNow()) return;
 
-    // 3. Если ещё нет — ждём появления EJS_emulator
     let tries = 0;
     const iv = setInterval(function () {
         tries++;

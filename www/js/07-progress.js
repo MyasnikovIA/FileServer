@@ -1,23 +1,31 @@
 // ============================================================
-// 07-progress.js — модальное окно прогресса операций.
+// 07-progress.js — мульти-инстансный прогресс операций.
+// ============================================================
 //
-// Возможности:
-//   • показывается в центре экрана, поверх окон WM (z-index: 99999);
-//   • перетаскивается за заголовок (drag);
-//   • кнопка ✕ в заголовке: во время работы — «Свернуть»,
-//     после завершения — «Закрыть»;
-//   • кнопка «▼ Свернуть» превращает окно в мини-индикатор;
-//   • мини-индикатор кликом возвращается в полноразмерный вид;
-//   • для быстрых операций перед стартом принудительно
-//     отдаём кадр браузеру (FAR._nextPaint), чтобы пользователь
-//     увидел прогресс-бар хотя бы на один кадр.
+// Каждый вызов FAR.startProgress() создаёт НОВЫЙ инстанс
+// со своим DOM-элементом .progress-content внутри
+// #progressStack. Несколько копирований/загрузок могут идти
+// параллельно, каждый со своим прогресс-баром.
+//
+// Инстанс имеет методы:
+//   prog.update(current, total, currentItem?, errors?)
+//   prog.log(msg, type?)
+//   prog.finish(errorCount?)
+//   prog.cancel()
+//   prog.close()
+//   prog.minimize()
+//   prog.restore()
+// и свойство prog.state — { active, cancelled, current, total,
+//                            errors, logLines, … }
+//
+// Старый API (FAR.updateProgress, FAR.progressLog, FAR.finishProgress,
+// FAR.cancelProgress, FAR.minimizeProgress, FAR.restoreProgress,
+// FAR.closeProgress, FAR.closeProgressOrMinimize) сохранён для
+// совместимости. Он направляет вызов в "текущий" инстанс либо в
+// переданный первым аргументом (instance или id).
 // ============================================================
 
-// ============================================================
 // Принудительная перерисовка: даём браузеру отрисовать DOM.
-// Полезно для мгновенных операций — прогресс-бар не «прыгает»
-// из 0% в 100% без визуальной обратной связи.
-// ============================================================
 FAR._nextPaint = function () {
     return new Promise(function (resolve) {
         requestAnimationFrame(function () {
@@ -27,53 +35,49 @@ FAR._nextPaint = function () {
 };
 
 // ============================================================
-// Позиция окна прогресса (для drag). Сбрасывается при каждом
-// новом запуске операции.
+// Менеджер инстансов
 // ============================================================
-FAR._progressPos = { x: null, y: null };
+
+FAR.progressManager = FAR.progressManager || {
+    instances: new Map(),   // id → instance
+    nextId: 1,
+    currentId: null         // последний созданный (для обратной совместимости)
+};
+
+// Обратная совместимость: FAR.progress — ссылка на state "последнего"
+// инстанса. Используется в тех местах, где читают FAR.progress.active
+// или FAR.progress.logLines. Для проверки "есть ли хоть один активный"
+// используйте FAR.hasActiveProgress().
+FAR.progress = FAR.progress || {
+    active: false, cancelled: false,
+    current: 0, total: 0, errors: 0,
+    title: '', icon: '', logLines: [],
+    onCancel: null, minimized: false, autoCloseTimer: null
+};
 
 // ============================================================
-// Устанавливает drag окна прогресса за заголовок.
-// Вызывается из startProgress при каждом открытии окна;
-// сам обработчик вешается один раз (guard в header._farDragBound).
+// Drag карточки за заголовок
 // ============================================================
-FAR._installProgressDrag = function () {
-    const overlay = document.getElementById('progressOverlay');
-    if (!overlay) return;
-    const content = overlay.querySelector('.progress-content');
-    const header  = overlay.querySelector('.progress-header');
-    if (!content || !header) return;
 
-    header.style.cursor = 'move';
-    header.style.userSelect = 'none';
-
-    if (header._farDragBound) {
-        // при повторном показе восстанавливаем сохранённую позицию
-        if (FAR._progressPos.x !== null) {
-            content.style.position = 'fixed';
-            content.style.left = FAR._progressPos.x + 'px';
-            content.style.top  = FAR._progressPos.y + 'px';
-            content.style.margin = '0';
-        }
-        return;
-    }
+FAR._installProgressDragFor = function (instance) {
+    const content = instance.el;
+    const header  = content.querySelector('.progress-header');
+    if (!header) return;
+    if (header._farDragBound) return;
     header._farDragBound = true;
 
     header.addEventListener('mousedown', function (e) {
         if (e.button !== 0) return;
-        // Не начинаем drag, если клик пришёлся по кнопке
         if (e.target.closest('button')) return;
 
         const startX = e.clientX;
         const startY = e.clientY;
         const rect = content.getBoundingClientRect();
 
-        // Фиксируем текущие размеры и позицию
         content.style.position = 'fixed';
         content.style.left = rect.left + 'px';
         content.style.top  = rect.top + 'px';
         content.style.width = rect.width + 'px';
-        content.style.maxHeight = '80vh';
         content.style.margin = '0';
 
         const onMove = function (ev) {
@@ -83,7 +87,7 @@ FAR._installProgressDrag = function () {
             ny = Math.max(0, Math.min(window.innerHeight - 40,          ny));
             content.style.left = nx + 'px';
             content.style.top  = ny + 'px';
-            FAR._progressPos = { x: nx, y: ny };
+            instance.pos = { x: nx, y: ny };
         };
 
         const onUp = function () {
@@ -97,164 +101,322 @@ FAR._installProgressDrag = function () {
 };
 
 // ============================================================
-// Кнопка ✕ в заголовке:
-//   • если операция ещё идёт — сворачиваем (не отменяем!);
-//   • если завершена — закрываем окно.
+// Создание инстанса
 // ============================================================
-FAR.closeProgressOrMinimize = function () {
-    if (FAR.progress.active) {
-        FAR.minimizeProgress();
-    } else {
-        FAR.closeProgress();
-    }
-};
 
-// ============================================================
-// startProgress — открывает окно операции.
-//
-// После установки всех значений НЕ вызываем принудительно
-// _nextPaint — это делает вызывающий код (transfer, upload)
-// через await FAR._nextPaint(). Так модуль остаётся синхронным
-// API и не ломает старые вызовы.
-// ============================================================
-FAR.startProgress = function(icon, title, total, onCancel) {
-    const p = FAR.progress;
-    if (p.autoCloseTimer) { clearTimeout(p.autoCloseTimer); p.autoCloseTimer = null; }
-
-    p.active = true; p.cancelled = false; p.current = 0; p.total = total;
-    p.errors = 0; p.title = title; p.icon = icon; p.logLines = [];
-    p.onCancel = onCancel || null; p.minimized = false;
-
-    document.getElementById('progressIcon').textContent = icon;
-    document.getElementById('progressTitle').textContent = title;
-    document.getElementById('progressDone').textContent = '0';
-    document.getElementById('progressTotal').textContent = String(total);
-    document.getElementById('progressErrors').textContent = '';
-    document.getElementById('progressPercent').textContent = '0%';
-    document.getElementById('progressFill').style.width = '0%';
-    document.getElementById('progressFill').className = 'progress-bar-fill';
-    document.getElementById('progressCurrent').textContent = '—';
-    document.getElementById('progressLog').innerHTML = '';
-    document.getElementById('progressCancelBtn').disabled = false;
-    document.getElementById('progressCancelBtn').style.display = '';
-    document.getElementById('progressCloseBtn').disabled = true;
-    document.getElementById('progressCloseBtn').style.display = 'none';
-
-    // Сброс позиции drag-окна
-    FAR._progressPos = { x: null, y: null };
+FAR._createProgressInstance = function (icon, title, total, onCancel) {
     const overlay = document.getElementById('progressOverlay');
-    const content = overlay ? overlay.querySelector('.progress-content') : null;
-    if (content) {
-        content.style.position = '';
-        content.style.left = '';
-        content.style.top = '';
-        content.style.width = '';
-        content.style.maxHeight = '';
-        content.style.margin = '';
+    const stack   = document.getElementById('progressStack');
+    if (!overlay || !stack) {
+        throw new Error('progressOverlay/progressStack не найдены в DOM');
     }
 
-    document.getElementById('progressOverlay').classList.remove('hidden');
-    document.getElementById('progressMini').classList.add('hidden');
+    const id = 'prog-' + (FAR.progressManager.nextId++);
 
-    document.getElementById('miniIcon').textContent = icon;
-    document.getElementById('miniTitle').textContent = title;
+    const el = document.createElement('div');
+    el.className = 'progress-content';
+    el.dataset.progId = id;
+    el.innerHTML =
+        '<div class="progress-header">' +
+        '  <div class="progress-title">' +
+        '    <span class="op-icon" data-role="icon"></span>' +
+        '    <span data-role="title"></span>' +
+        '  </div>' +
+        '  <div class="progress-actions">' +
+        '    <button data-role="minimize" title="Свернуть">▼ Свернуть</button>' +
+        '    <button data-role="close" title="Закрыть">✕</button>' +
+        '  </div>' +
+        '</div>' +
+        '<div class="progress-body">' +
+        '  <div class="progress-stats">' +
+        '    <span>' +
+        '      <span class="done" data-role="done">0</span> / ' +
+        '      <span data-role="total"></span>' +
+        '      <span class="errors" data-role="errors"></span>' +
+        '    </span>' +
+        '    <span class="percent" data-role="percent">0%</span>' +
+        '  </div>' +
+        '  <div class="progress-bar-track">' +
+        '    <div class="progress-bar-fill" data-role="fill"></div>' +
+        '  </div>' +
+        '  <div class="progress-current" data-role="current">—</div>' +
+        '  <div class="progress-log" data-role="log"></div>' +
+        '</div>' +
+        '<div class="progress-footer">' +
+        '  <button class="btn-cancel" data-role="cancel">⛔ Отмена</button>' +
+        '  <button class="btn-close"  data-role="finish" disabled>✓ Готово</button>' +
+        '</div>';
 
-    // Включаем drag + кнопка закрытия
-    FAR._installProgressDrag();
+    stack.appendChild(el);
+    overlay.classList.remove('hidden');
+
+    // --- state ---
+    const state = {
+        active: true,
+        cancelled: false,
+        current: 0,
+        total: total,
+        errors: 0,
+        title: title,
+        icon: icon,
+        logLines: [],
+        onCancel: onCancel || null,
+        minimized: false,
+        autoCloseTimer: null
+    };
+
+    // --- shortcut на DOM ---
+    const $ = sel => el.querySelector('[data-role="' + sel + '"]');
+
+    // --- instance ---
+    const instance = {
+        id: id,
+        el: el,
+        state: state,
+        pos: null,
+
+        update: function (current, total2, currentItem, errorCount) {
+            state.current = current;
+            state.total = total2;
+            if (typeof errorCount === 'number') state.errors = errorCount;
+
+            const pct = total2 > 0 ? Math.round((current / total2) * 100) : 0;
+            $('done').textContent    = String(current);
+            $('total').textContent   = String(total2);
+            $('percent').textContent = pct + '%';
+            $('fill').style.width    = pct + '%';
+
+            if (state.errors > 0) $('errors').textContent = ' (ошибок: ' + state.errors + ')';
+            else $('errors').textContent = '';
+
+            if (currentItem) $('current').textContent = currentItem;
+        },
+
+        log: function (msg, type) {
+            const cls = type || 'info';
+            const logEl = $('log');
+            const line = document.createElement('div');
+            line.className = 'log-line ' + cls;
+            const time = new Date().toLocaleTimeString('ru-RU', { hour12: false });
+            line.textContent = '[' + time + '] ' + msg;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
+            state.logLines.push(line.textContent);
+        },
+
+        finish: function (errorCount) {
+            state.active = false;
+            if (typeof errorCount === 'number') state.errors = errorCount;
+
+            $('percent').textContent = '100%';
+            $('fill').style.width = '100%';
+            if (state.errors > 0) {
+                $('fill').className = 'progress-bar-fill error';
+                $('errors').textContent = ' (ошибок: ' + state.errors + ')';
+            }
+            $('current').textContent = 'Завершено';
+            $('cancel').disabled = true;
+            $('cancel').style.display = 'none';
+            $('finish').disabled = false;
+            $('finish').style.display = '';
+
+            if (state.autoCloseTimer) clearTimeout(state.autoCloseTimer);
+            state.autoCloseTimer = setTimeout(function () {
+                instance.close();
+            }, 1200);
+        },
+
+        cancel: function () {
+            if (!state.active) return;
+            if (!confirm('Отменить операцию? Уже выполненные действия останутся.')) return;
+            state.cancelled = true;
+            instance.log('⛔ Отмена запрошена пользователем', 'warn');
+            $('cancel').disabled = true;
+            if (state.onCancel) {
+                try { state.onCancel(); } catch (e) { console.warn('[progress] onCancel:', e); }
+            }
+        },
+
+        close: function () {
+            if (state.active) return; // пока идёт — не закрываем
+            if (state.autoCloseTimer) {
+                clearTimeout(state.autoCloseTimer);
+                state.autoCloseTimer = null;
+            }
+            if (el.parentNode) el.parentNode.removeChild(el);
+            FAR.progressManager.instances.delete(id);
+            if (FAR.progressManager.currentId === id) {
+                FAR.progressManager.currentId = null;
+            }
+            if (stack.children.length === 0) {
+                overlay.classList.add('hidden');
+            }
+        },
+
+        minimize: function () {
+            state.minimized = true;
+            el.classList.add('progress-minimized');
+        },
+
+        restore: function () {
+            state.minimized = false;
+            el.classList.remove('progress-minimized');
+        }
+    };
+
+    // --- начальное заполнение ---
+    $('icon').textContent  = icon  || '';
+    $('title').textContent = title || '';
+    $('total').textContent = String(total);
+
+    // --- обработчики кнопок ---
+    $('cancel').onclick = function () { instance.cancel(); };
+    $('finish').onclick = function () { instance.close(); };
+    $('minimize').onclick = function () { instance.minimize(); };
+    $('close').onclick = function () {
+        if (instance.state.active) instance.minimize();
+        else instance.close();
+    };
+
+    // Двойной клик по заголовку — переключить свёрнутость
+    el.querySelector('.progress-header').addEventListener('dblclick', function (e) {
+        if (e.target.closest('button')) return;
+        if (instance.state.minimized) instance.restore();
+        else instance.minimize();
+    });
+
+    // Drag
+    FAR._installProgressDragFor(instance);
+
+    // Регистрируем инстанс
+    FAR.progressManager.instances.set(id, instance);
+    FAR.progressManager.currentId = id;
+
+    // Обратная совместимость: FAR.progress указывает на state последнего
+    FAR.progress = state;
+
+    return instance;
 };
 
-FAR.updateProgress = function(current, total, currentItem, errorCount) {
-    const p = FAR.progress;
-    p.current = current; p.total = total;
-    if (typeof errorCount === 'number') p.errors = errorCount;
+// ============================================================
+// Публичное API
+// ============================================================
 
-    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-    document.getElementById('progressDone').textContent = String(current);
-    document.getElementById('progressTotal').textContent = String(total);
-    document.getElementById('progressPercent').textContent = pct + '%';
-    document.getElementById('progressFill').style.width = pct + '%';
+/**
+ * Создаёт новый инстанс прогресса.
+ *
+ * @returns {Object} instance с методами update/log/finish/cancel/close/minimize/restore
+ */
+FAR.startProgress = function (icon, title, total, onCancel) {
+    return FAR._createProgressInstance(icon, title, total, onCancel);
+};
 
-    if (p.errors > 0) {
-        document.getElementById('progressErrors').textContent = ` (ошибок: ${p.errors})`;
+/**
+ * Возвращает true, если есть хотя бы один активный прогресс.
+ * Используйте вместо `FAR.progress.active` (это только последний инстанс).
+ */
+FAR.hasActiveProgress = function () {
+    for (const inst of FAR.progressManager.instances.values()) {
+        if (inst.state.active) return true;
+    }
+    return false;
+};
+
+/**
+ * Резолвит инстанс для обратной совместимости.
+ * @param {Object|string|null|undefined} progOrId
+ *        instance (у него есть .update) | id | null/undefined
+ */
+FAR._resolveProgressInstance = function (progOrId) {
+    if (progOrId && typeof progOrId === 'object' && typeof progOrId.update === 'function') {
+        return progOrId;
+    }
+    if (typeof progOrId === 'string') {
+        const byId = FAR.progressManager.instances.get(progOrId);
+        if (byId) return byId;
+    }
+    // fallback: последний созданный
+    if (FAR.progressManager.currentId) {
+        const cur = FAR.progressManager.instances.get(FAR.progressManager.currentId);
+        if (cur) return cur;
+    }
+    // fallback: последний активный
+    let last = null;
+    for (const inst of FAR.progressManager.instances.values()) {
+        if (inst.state.active) last = inst;
+    }
+    return last;
+};
+
+// ---------- backward-compat API ----------
+//
+// Сигнатуры сохранены. Первый аргумент может быть instance/id
+// (тогда работаем с ним), либо быть пропущен (тогда — "текущий").
+
+FAR.updateProgress = function (progOrId, current, total, currentItem, errorCount) {
+    // Поддержка старой сигнатуры (current, total, currentItem, errorCount)
+    if (typeof progOrId === 'number') {
+        errorCount  = currentItem;
+        currentItem = total;
+        total       = current;
+        current     = progOrId;
+        progOrId    = null;
+    }
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (inst) inst.update(current, total, currentItem, errorCount);
+};
+
+FAR.progressLog = function (progOrId, msg, type) {
+    let inst, actualMsg, actualType;
+    if (progOrId && typeof progOrId === 'object' && typeof progOrId.log === 'function') {
+        inst = progOrId;
+        actualMsg  = msg;
+        actualType = type;
+    } else if (typeof progOrId === 'string' && FAR.progressManager.instances.has(progOrId)) {
+        inst = FAR.progressManager.instances.get(progOrId);
+        actualMsg  = msg;
+        actualType = type;
     } else {
-        document.getElementById('progressErrors').textContent = '';
+        // старая сигнатура: (msg, type)
+        inst = FAR._resolveProgressInstance(null);
+        actualMsg  = progOrId;
+        actualType = msg;
     }
-
-    if (currentItem) document.getElementById('progressCurrent').textContent = currentItem;
-
-    document.getElementById('miniProgress').textContent = `${current} / ${total}`;
-    document.getElementById('miniPercent').textContent = pct + '%';
-    document.getElementById('miniFill').style.width = pct + '%';
+    if (inst) inst.log(actualMsg, actualType);
 };
 
-FAR.progressLog = function(msg, type) {
-    const cls = type || 'info';
-    const log = document.getElementById('progressLog');
-    const line = document.createElement('div');
-    line.className = 'log-line ' + cls;
-    const time = new Date().toLocaleTimeString('ru-RU', { hour12: false });
-    line.textContent = `[${time}] ${msg}`;
-    log.appendChild(line);
-    log.scrollTop = log.scrollHeight;
-    FAR.progress.logLines.push(line.textContent);
-};
-
-FAR.finishProgress = function(errorCount) {
-    const p = FAR.progress;
-    p.active = false;
-    if (typeof errorCount === 'number') p.errors = errorCount;
-
-    document.getElementById('progressPercent').textContent = '100%';
-    document.getElementById('progressFill').style.width = '100%';
-
-    if (p.errors > 0) {
-        document.getElementById('progressFill').className = 'progress-bar-fill error';
-        document.getElementById('progressErrors').textContent = ` (ошибок: ${p.errors})`;
+FAR.finishProgress = function (progOrId, errorCount) {
+    if (typeof progOrId === 'number') {
+        errorCount = progOrId;
+        progOrId = null;
     }
-
-    document.getElementById('progressCurrent').textContent = 'Завершено';
-    document.getElementById('progressCancelBtn').disabled = true;
-    document.getElementById('progressCancelBtn').style.display = 'none';
-    document.getElementById('progressCloseBtn').disabled = false;
-    document.getElementById('progressCloseBtn').style.display = '';
-
-    document.getElementById('miniProgress').textContent = `${p.current} / ${p.total}`;
-    document.getElementById('miniPercent').textContent = '100%';
-    document.getElementById('miniFill').style.width = '100%';
-
-    if (p.autoCloseTimer) clearTimeout(p.autoCloseTimer);
-    p.autoCloseTimer = setTimeout(function() {
-        FAR.closeProgress();
-        p.autoCloseTimer = null;
-    }, 1200);
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (inst) inst.finish(errorCount);
 };
 
-FAR.cancelProgress = function() {
-    const p = FAR.progress;
-    if (!p.active) return;
-    if (!confirm('Отменить операцию? Уже выполненные действия останутся.')) return;
-    p.cancelled = true;
-    FAR.progressLog('⛔ Отмена запрошена пользователем', 'warn');
-    document.getElementById('progressCancelBtn').disabled = true;
-    if (p.onCancel) p.onCancel();
+FAR.cancelProgress = function (progOrId) {
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (inst) inst.cancel();
 };
 
-FAR.closeProgress = function() {
-    const p = FAR.progress;
-    if (p.active) return;
-    if (p.autoCloseTimer) { clearTimeout(p.autoCloseTimer); p.autoCloseTimer = null; }
-    document.getElementById('progressOverlay').classList.add('hidden');
-    document.getElementById('progressMini').classList.add('hidden');
+FAR.closeProgress = function (progOrId) {
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (inst) inst.close();
 };
 
-FAR.minimizeProgress = function() {
-    FAR.progress.minimized = true;
-    document.getElementById('progressOverlay').classList.add('hidden');
-    document.getElementById('progressMini').classList.remove('hidden');
+FAR.minimizeProgress = function (progOrId) {
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (inst) inst.minimize();
 };
 
-FAR.restoreProgress = function() {
-    FAR.progress.minimized = false;
-    document.getElementById('progressMini').classList.add('hidden');
-    document.getElementById('progressOverlay').classList.remove('hidden');
+FAR.restoreProgress = function (progOrId) {
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (inst) inst.restore();
+};
+
+FAR.closeProgressOrMinimize = function (progOrId) {
+    const inst = FAR._resolveProgressInstance(progOrId);
+    if (!inst) return;
+    if (inst.state.active) inst.minimize();
+    else inst.close();
 };

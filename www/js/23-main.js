@@ -1,16 +1,6 @@
 // ============================================================
 // Точка входа: загрузка модалок, инициализация, автоподключение
 // ============================================================
-// Поддерживает мульти-БД (модули 35a–35d):
-//   • при старте подключает ОБЕ панели к одной БД;
-//   • при клике по шапке панели можно сменить БД только для неё;
-//   • данные подключения каждой панели хранятся отдельно.
-//
-// ЛЕНИВАЯ ЗАГРУЗКА:
-//   loadFilesForSide грузит только текущую директорию панели,
-//   а не всю БД. При первом подключении грузим корень обеих
-//   панелей.
-// ============================================================
 
 FAR.loadModalFragment = function(path) {
     try {
@@ -103,11 +93,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // ============================================================
     // Восстанавливаем токен из cookie.
-    //
-    // Если пользователь уже логинился ранее и cookie ещё жива —
-    // подхватываем токен, чтобы прямые URL (img/video/a href)
-    // работали без повторного логина. Также это восстановит
-    // Authorization для следующих fetch-запросов.
     // ============================================================
     if (typeof FAR.restoreAuthTokenFromCookie === 'function') {
         FAR.restoreAuthTokenFromCookie();
@@ -153,9 +138,19 @@ document.addEventListener('DOMContentLoaded', async function() {
             // ============================================================
             // Восстанавливаем последний режим работы.
             //
-            // Если пользователь закрыл страницу в оконном режиме —
-            // автоматически входим в оконный режим. Иначе остаёмся
-            // в панельном (дефолт).
+            // ВАЖНО: НЕ вызываем здесь FAR.FS.enter().
+            // requestFullscreen работает только в ответ на user gesture,
+            // а setTimeout — НЕ user gesture. Браузер блокирует вызов
+            // и пишет в консоль:
+            //   "Failed to execute 'requestFullscreen' ... only be
+            //    initiated by a user gesture".
+            //
+            // Восстановление fullscreen уже реализовано в
+            // 47-fullscreen.js → FAR.FS._installAutoRestore():
+            // там навешивается обработчик на первый клик/клавишу,
+            // и при наличии желания (filebd_fullscreen=1) браузер
+            // корректно войдёт в полноэкранный режим по этому
+            // жесту.
             // ============================================================
             if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.getSavedMode === 'function') {
                 const savedMode = FAR.WM.getSavedMode();
@@ -165,13 +160,6 @@ document.addEventListener('DOMContentLoaded', async function() {
                             FAR.WM.enter();
                         } catch (e) {
                             console.warn('[WM] restore mode failed:', e);
-                        }
-                        // Попытка восстановить fullscreen (может
-                        // не сработать без user gesture — тогда
-                        // сработает _installAutoRestore в
-                        // 47-fullscreen.js при первом клике).
-                        if (typeof FAR.FS !== 'undefined' && typeof FAR.FS.enter === 'function') {
-                            FAR.FS.enter().catch(function () {});
                         }
                     }, 200);
                 }
