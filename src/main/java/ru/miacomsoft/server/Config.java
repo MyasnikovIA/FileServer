@@ -78,7 +78,15 @@ public class Config {
             throw new IOException("Config file not found: " + configPath);
         }
         String raw = new String(Files.readAllBytes(configPath), StandardCharsets.UTF_8);
-        JSONObject root = new JSONObject(raw);
+
+        // ============================================================
+        // ЕДИНСТВЕННОЕ ИЗМЕНЕНИЕ:
+        // прогоняем текст файла через JsonCommentsStripper, который
+        // вырезает комментарии (//, #, /* … */), сохраняя содержимое
+        // строковых литералов. Дальше — обычный org.json.
+        // ============================================================
+        String cleanJson = JsonCommentsStripper.strip(raw);
+        JSONObject root = new JSONObject(cleanJson);
 
         Config cfg = new Config();
 
