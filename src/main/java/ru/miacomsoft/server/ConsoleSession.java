@@ -10,6 +10,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,8 +22,11 @@ public class ConsoleSession {
     private Process process;
     private OutputStream stdin;
     private InputStream stdout;
-    private boolean isPty = false;
+    private boolean useNativePty = false;
     private boolean closed = false;
+
+    // Путь к файлу, в котором утилита script сохранит имя псевдотерминала
+    private String ttyFilePath = null;
 
     private final List<SseConnection> sseList = new CopyOnWriteArrayList<>();
 
@@ -36,34 +42,41 @@ public class ConsoleSession {
         env.put("LANG", "C.UTF-8");
 
         try {
-            // 1. Пытаемся запустить через PTY (Linux Mint, Windows, macOS)
+            // 1. Пытаемся запустить через нативный PTY (Linux Mint, Windows)
             PtyProcessBuilder ptyBuilder = new PtyProcessBuilder(new String[]{shell})
                     .setEnvironment(env)
                     .setDirectory(cwd);
             process = ptyBuilder.start();
-            isPty = true;
-            System.out.println("[Console] Используется PTY.");
+            useNativePty = true;
+            System.out.println("[Console] Используется нативный PTY.");
         } catch (Throwable t) {
-            // 2. Фолбэк для Termux / Android
-            System.err.println("[Console] Внимание: PTY не поддерживается на этой ОС.");
-            System.err.println("[Console] Переключение на ProcessBuilder (без TTY).");
+            // 2. Фолбэк для Termux / Android с использованием встроенной утилиты script
+            System.err.println("[Console] Нативный PTY не поддерживается. Используем встроенную утилиту 'script'.");
 
             try {
-                // Используем stdbuf, чтобы отключить буферизацию вывода (-i0 -o0 -e0)
-                ProcessBuilder pb = new ProcessBuilder("stdbuf", "-i0", "-o0", "-e0", shell, "-i");
+                String tempDir = System.getProperty("java.io.tmpdir");
+                ttyFilePath = tempDir + "/far_tty_" + System.nanoTime() + ".txt";
+
+                // Команда: script создает TTY, записывает его имя в файл и запускает bash
+                String cmd = "tty > " + ttyFilePath + "; exec " + shell + " -i";
+
+                ProcessBuilder pb = new ProcessBuilder("script", "-q", "-c", cmd, "/dev/null");
                 pb.directory(new File(cwd));
                 pb.environment().putAll(env);
                 pb.redirectErrorStream(true);
                 process = pb.start();
+                useNativePty = false;
             } catch (Exception e) {
-                System.err.println("[Console] stdbuf не найден, запуск без него. Вывод может быть с задержкой.");
+                // Если утилита script недоступна, запускаем просто без TTY (mc не будет масштабироваться)
+                System.err.println("[Console] Утилита 'script' не найдена. Запуск без TTY.");
                 ProcessBuilder pb = new ProcessBuilder(shell);
                 pb.directory(new File(cwd));
                 pb.environment().putAll(env);
                 pb.redirectErrorStream(true);
                 process = pb.start();
+                useNativePty = false;
+                ttyFilePath = null;
             }
-            isPty = false;
         }
 
         stdin = process.getOutputStream();
@@ -100,10 +113,29 @@ public class ConsoleSession {
     }
 
     public void resize(int cols, int rows) {
-        if (isPty && process instanceof PtyProcess) {
+        // Если размер нулевой (окно свернули) - игнорируем
+        if (cols <= 0 || rows <= 0) return;
+
+        if (useNativePty && process instanceof PtyProcess) {
+            // Для Windows и Linux Mint
             try {
                 ((PtyProcess) process).setWinSize(new WinSize(cols, rows));
             } catch (Throwable t) {}
+        } else if (ttyFilePath != null) {
+            // Для Termux / Android: читаем имя терминала и меняем его размер через stty
+            try {
+                Path p = Paths.get(ttyFilePath);
+                if (Files.exists(p)) {
+                    String tty = new String(Files.readAllBytes(p), StandardCharsets.UTF_8).trim();
+                    if (!tty.isEmpty() && tty.startsWith("/dev/")) {
+                        // Встроенная команда stty меняет размер PTY.
+                        // Android ядро само пошлет SIGWINCH программе (mc/vim).
+                        new ProcessBuilder("stty", "-F", tty, "rows", String.valueOf(rows), "cols", String.valueOf(cols)).start();
+                    }
+                }
+            } catch (Exception e) {
+                // Игнорируем ошибки изменения размера
+            }
         }
     }
 
@@ -130,5 +162,8 @@ public class ConsoleSession {
         closed = true;
         if (process != null) process.destroy();
         sseList.clear();
+        if (ttyFilePath != null) {
+            try { Files.deleteIfExists(Paths.get(ttyFilePath)); } catch (Exception e) {}
+        }
     }
 }
