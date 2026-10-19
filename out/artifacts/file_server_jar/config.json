@@ -1,0 +1,65 @@
+{
+  "http": {
+    "port": 8080,
+    "host": "0.0.0.0"
+  },
+
+  "web": "/home/myasnikovia/JavaProject/FileServer_git/www",
+
+  "console": {
+    "shell": "",
+    "cwd": "/home/myasnikovia",
+    "timeoutSec": 300,
+    "maxOutputBytes": 1048576
+  },
+
+  "videochat": {
+    "enabled": true,
+    "port": 8081,
+    "wsGuid": "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+  },
+
+  "videochat": {
+    "enabled": true,
+    "port": 8081,
+    "wsGuid": "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+  },
+
+  "users": [
+    {
+      "name": "myasnikovia",
+      "password": "XXXXXXXXXXXXXXX",
+      "quota": -1,
+      "console": true
+    }
+  ],
+
+  "shares": [
+    {
+      "name": "Documents",
+      "physical": "/media/myasnikovia/WorDisk/!MyClouds",
+      "type": "folder",
+      "access": ["read", "write", "delete"],
+      "anonymous": false,
+      "users": ["myasnikovia", "olga"],
+      "quota": 200
+    },
+    {
+      "name": "Public",
+      "physical": "/mnt/ntfs-disk/MyCloudsTemp",
+      "type": "folder",
+      "access": ["read"],
+      "anonymous": true,
+      "users": [],
+      "quota": 10
+    },
+    {
+      "name": "logo.png",
+      "physical": "D:/Public/logo.png",
+      "type": "file",
+      "access": ["read"],
+      "anonymous": true,
+      "users": []
+    }
+  ]
+}

@@ -5,151 +5,130 @@ import com.pty4j.PtyProcessBuilder;
 import com.pty4j.WinSize;
 import org.json.JSONObject;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class ConsoleSession {
+    private Process process;
+    private OutputStream stdin;
+    private InputStream stdout;
+    private boolean isPty = false;
+    private boolean closed = false;
 
-    public final String key;
-    private SseConnection sse;
-    private PtyProcess process;
-    private volatile boolean closed = false;
-    private final Object lock = new Object();
+    private final List<SseConnection> sseList = new CopyOnWriteArrayList<>();
 
-    public ConsoleSession(String key) {
-        this.key = key;
+    public ConsoleSession() {
     }
 
-    public void attachSse(SseConnection conn) {
-        synchronized (lock) {
-            // Если старое соединение зависло, закрываем его, чтобы не было утечек
-            if (this.sse != null && this.sse != conn) {
-                try { this.sse.close(); } catch (Exception e) {}
-            }
-            this.sse = conn;
-        }
+    public ConsoleSession(String shell) {
     }
 
-    // Теперь detachSse принимает соединение, чтобы старое не сбрасывало новое
-    public void detachSse(SseConnection conn) {
-        synchronized (lock) {
-            if (this.sse == conn) {
-                this.sse = null;
-            }
-        }
-    }
+    public void startShell(String shell, String cwd) throws IOException {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.put("TERM", "xterm-256color");
+        env.put("LANG", "C.UTF-8");
 
-    public boolean isClosed() { return closed; }
-
-    public void close() {
-        closed = true;
-        synchronized (lock) {
-            if (process != null && process.isAlive()) {
-                process.destroyForcibly();
-            }
-        }
-    }
-
-    private void sendEvent(String event, String data) {
-        SseConnection s;
-        synchronized (lock) { s = sse; }
-        if (s == null) return;
-        try { s.send(event, data); }
-        catch (IOException e) { /* соединение упало */ }
-    }
-
-    private void sendOutput(String text) {
-        JSONObject o = new JSONObject();
-        o.put("text", text);
-        sendEvent("output", o.toString());
-    }
-
-    private void sendError(String msg) {
-        JSONObject o = new JSONObject();
-        o.put("error", msg);
-        sendEvent("error", o.toString());
-    }
-
-    public void startShell(String cwd, String shell) {
-        synchronized (lock) {
-            if (process != null && process.isAlive()) return;
-
-            String os = System.getProperty("os.name", "").toLowerCase();
-            boolean isWindows = os.contains("win");
-
-            String realShell = (shell == null || shell.isEmpty())
-                    ? (isWindows ? "cmd.exe" : "bash")
-                    : shell;
-
-            String[] cmd = { realShell };
+        try {
+            // 1. Пытаемся запустить через PTY (Linux Mint, Windows, macOS)
+            PtyProcessBuilder ptyBuilder = new PtyProcessBuilder(new String[]{shell})
+                    .setEnvironment(env)
+                    .setDirectory(cwd);
+            process = ptyBuilder.start();
+            isPty = true;
+            System.out.println("[Console] Используется PTY.");
+        } catch (Throwable t) {
+            // 2. Фолбэк для Termux / Android
+            System.err.println("[Console] Внимание: PTY не поддерживается на этой ОС.");
+            System.err.println("[Console] Переключение на ProcessBuilder (без TTY).");
 
             try {
-                Map<String, String> env = new HashMap<>(System.getenv());
-
-                if (!isWindows) {
-                    env.put("TERM", "xterm-256color");
-                    env.put("LANG", "C.UTF-8");
-                    env.put("LC_ALL", "C.UTF-8");
-                }
-
-                PtyProcessBuilder pb = new PtyProcessBuilder(cmd)
-                        .setEnvironment(env)
-                        .setInitialColumns(80)
-                        .setInitialRows(24);
-
-                if (cwd != null && !cwd.isEmpty()) {
-                    File dir = new File(cwd);
-                    if (dir.isDirectory()) pb.setDirectory(cwd);
-                }
-
+                // Используем stdbuf, чтобы отключить буферизацию вывода (-i0 -o0 -e0)
+                ProcessBuilder pb = new ProcessBuilder("stdbuf", "-i0", "-o0", "-e0", shell, "-i");
+                pb.directory(new File(cwd));
+                pb.environment().putAll(env);
+                pb.redirectErrorStream(true);
                 process = pb.start();
-
-                Thread readThread = new Thread(() -> {
-                    // ИСПОЛЬЗУЕМ InputStreamReader - он не разрывает UTF-8 символы,
-                    // а собирает их целиком, даже если они пришли разными кусками.
-                    try (Reader reader = new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)) {
-                        char[] buf = new char[4096];
-                        int n;
-                        while ((n = reader.read(buf)) > 0) {
-                            String text = new String(buf, 0, n);
-                            sendOutput(text);
-                        }
-                    } catch (IOException e) {
-                        // ignore
-                    }
-                });
-                readThread.setDaemon(true);
-                readThread.start();
-
-            } catch (Throwable e) {
-                sendError("Ошибка запуска оболочки: " + e.getMessage());
-                e.printStackTrace();
+            } catch (Exception e) {
+                System.err.println("[Console] stdbuf не найден, запуск без него. Вывод может быть с задержкой.");
+                ProcessBuilder pb = new ProcessBuilder(shell);
+                pb.directory(new File(cwd));
+                pb.environment().putAll(env);
+                pb.redirectErrorStream(true);
+                process = pb.start();
             }
+            isPty = false;
         }
+
+        stdin = process.getOutputStream();
+        stdout = process.getInputStream();
+
+        startReaderThread();
     }
 
-    public void writeInput(String data) {
-        synchronized (lock) {
-            if (process == null || !process.isAlive()) return;
+    private void startReaderThread() {
+        Thread t = new Thread(() -> {
+            byte[] buffer = new byte[8192];
+            int read;
             try {
-                OutputStream os = process.getOutputStream();
-                os.write(data.getBytes(StandardCharsets.UTF_8));
-                os.flush();
+                while (!closed && (read = stdout.read(buffer)) != -1) {
+                    String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                    String eventData = "{\"text\":" + JSONObject.quote(text) + "}";
+
+                    for (SseConnection sse : sseList) {
+                        try {
+                            sse.send("output", eventData);
+                        } catch (Exception e) {}
+                    }
+                }
             } catch (IOException e) {
-                sendError("Ошибка записи: " + e.getMessage());
+                // Поток закрыт
+            } finally {
+                closed = true;
+                if (process != null) process.destroy();
+                sseList.clear();
             }
-        }
+        });
+        t.setDaemon(true);
+        t.start();
     }
 
     public void resize(int cols, int rows) {
-        synchronized (lock) {
-            if (process != null && process.isAlive()) {
-                try {
-                    process.setWinSize(new WinSize(cols, rows));
-                } catch (Throwable ignored) {}
-            }
+        if (isPty && process instanceof PtyProcess) {
+            try {
+                ((PtyProcess) process).setWinSize(new WinSize(cols, rows));
+            } catch (Throwable t) {}
         }
+    }
+
+    public void writeInput(String data) throws IOException {
+        if (stdin != null) {
+            stdin.write(data.getBytes(StandardCharsets.UTF_8));
+            stdin.flush();
+        }
+    }
+
+    public void attachSse(SseConnection sse) {
+        sseList.add(sse);
+    }
+
+    public void detachSse(SseConnection sse) {
+        sseList.remove(sse);
+    }
+
+    public boolean isClosed() {
+        return closed || process == null || !process.isAlive();
+    }
+
+    public void close() {
+        closed = true;
+        if (process != null) process.destroy();
+        sseList.clear();
     }
 }

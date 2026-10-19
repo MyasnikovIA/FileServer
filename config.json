@@ -6,60 +6,64 @@
 
   "web": "www",
 
+  # для Windows
+  "console": {
+    "shell": "cmd.exe",
+    "cwd": "C:/",
+    "timeoutSec": 3600,
+    "maxOutputBytes": 1048576
+  },
+
+  # для Linux
+  #"console": {
+  #  "shell": "",
+  #  "cwd": "/home/myasnikovia",
+  #  "timeoutSec": 300,
+  #  "maxOutputBytes": 1048576
+  #},
+
+  # для Termux
+  #"console": {
+  #  "shell": "/data/data/com.termux/files/usr/bin/bash",
+  #  "cwd": "/data/data/com.termux/files/home",
+  #  "timeoutSec": 300,
+  #   "maxOutputBytes": 1048576
+  #},
+
+
+  "videochat": {
+    "enabled": true,
+    "port": 8081,
+    "wsGuid": "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+  },
+
   "users": [
     {
-      "name": "admin",
-      "password": "admin123",
-      "quota": -1
-    },
-    {
-      "name": "olga",
-      "password": "olga2024",
-      "quota": 500
-    },
-    {
-      "name": "guest",
-      "password": "",
-      "quota": 100
+      "name": "myasnikovia",
+      "password": "XXXXXXXXXXXX",
+      "quota": -1,
+      "console": true
     }
   ],
 
   "shares": [
     {
-      "name": "Documents",
-      "physical": "C:/data/docs",
+      "name": "",
+      "physical": "C:/JavaProject/FileServer_git",
       "type": "folder",
       "access": ["read", "write", "delete"],
       "anonymous": false,
-      "users": ["admin", "olga"],
+      "users": ["myasnikovia", "olga"],
       "quota": 200
     },
     {
-      "name": "test",
-      "physical": "C:/JavaProject/FileServer/DATA",
-      "type": "folder",
-      "access": ["read", "write", "delete"],
-      "anonymous": true,
-      "users": ["admin", "olga"],
-      "quota": 200
-    },
-    {
-      "name": "Photos",
-      "physical": "E:/Photos",
-      "type": "folder",
-      "access": ["read", "write"],
-      "anonymous": false,
-      "users": ["admin"],
-      "quota": -1
-    },
-    {
-      "name": "PublicReports",
-      "physical": "D:/Reports/2024",
+      "name": "Public",
+      "physical": "/mnt/ntfs-disk/MyCloudsTemp",
       "type": "folder",
       "access": ["read"],
       "anonymous": true,
       "users": [],
-      "quota": -1
+      "quota": 10
     },
     {
       "name": "logo.png",
@@ -68,15 +72,6 @@
       "access": ["read"],
       "anonymous": true,
       "users": []
-    },
-    {
-      "name": "Incoming",
-      "physical": "D:/Uploads",
-      "type": "folder",
-      "access": ["read", "write"],
-      "anonymous": false,
-      "users": ["guest"],
-      "quota": 50
     }
   ]
 }

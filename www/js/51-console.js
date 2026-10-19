@@ -13,7 +13,6 @@ FAR._loadXterm = function() {
     if (FAR._xtermLoadingPromise) return FAR._xtermLoadingPromise;
 
     FAR._xtermLoadingPromise = new Promise(function(resolve, reject) {
-        // Подключаем локальный CSS из lib/xterm/xterm.css
         if (!document.getElementById('xterm-css')) {
             const link = document.createElement('link');
             link.id = 'xterm-css';
@@ -26,12 +25,9 @@ FAR._loadXterm = function() {
             return new Promise((res, rej) => {
                 const s = document.createElement('script');
                 s.src = src;
-
-                // Временно прячем module/exports для корректной работы UMD-обертки xterm.js
                 const savedExports = window.exports;
                 const savedModule = window.module;
                 try { window.exports = undefined; window.module = undefined; } catch(e) {}
-
                 s.onload = () => {
                     try { window.exports = savedExports; window.module = savedModule; } catch(e) {}
                     res();
@@ -44,7 +40,6 @@ FAR._loadXterm = function() {
             });
         };
 
-        // Загружаем СТРОГО ПОСЛЕДОВАТЕЛЬНО локальные файлы
         loadScript('lib/xterm/xterm.js')
             .then(() => {
                 if (!window.Terminal) throw new Error('xterm.js загружен, но window.Terminal не создан');
@@ -132,6 +127,22 @@ FAR._createConsole = function (hostEl, opts) {
     let resizeObserver = null;
     let resizeTimer = null;
 
+    // Функция для безопасного изменения размера
+    const doFit = () => {
+        if (!term || S.destroyed) return;
+        try {
+            fitAddon.fit();
+        } catch (e) {
+            // Игнорируем ошибки, если элемент временно скрыт
+        }
+    };
+
+    // Обработчик изменения размера окна браузера
+    const onWindowResize = () => {
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(doFit, 100);
+    };
+
     function setStatus(text, cls) {
         elStatusTxt.textContent = text || '';
         elStatus.className = 'console-status' + (cls ? ' ' + cls : '');
@@ -162,61 +173,74 @@ FAR._createConsole = function (hostEl, opts) {
 
         term.open(elTermHost);
 
-        // Даем DOM время отрисоваться и высчитываем точный размер
-        setTimeout(() => {
-            fitAddon.fit();
-            term.focus();
-            connect();
-        }, 100);
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                doFit();
+                term.focus();
+                connect();
+            });
+        });
 
         const ctx = FAR.side && FAR.side[FAR.activePanel];
         const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
         const token = FAR.authToken || FAR.readCookieToken();
 
-        // Отправляем каждое нажатие клавиши
         term.onData(async (data) => {
             if (!S.connected) return;
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+
             try {
-                await fetch(baseUrl + '/api/console/input', {
+                const res = await fetch(baseUrl + '/api/console/input', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
+                    headers: headers,
                     body: JSON.stringify({ data: data })
                 });
-            } catch (e) {}
+                if (!res.ok) {
+                    console.warn('[console] input failed:', res.status);
+                }
+            } catch (e) {
+                console.error('[console] input fetch error:', e);
+            }
         });
 
-        // Отправляем размер при каждом изменении окна
         term.onResize(async (size) => {
+            if (size.cols === 0 || size.rows === 0) return;
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+
             try {
                 await fetch(baseUrl + '/api/console/resize', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
+                    headers: headers,
                     body: JSON.stringify({ cols: size.cols, rows: size.rows })
                 });
             } catch (e) {}
         });
 
-        // Возвращаем фокус при клике мимо терминала
-        hostEl.addEventListener('mousedown', function (e) {
+        const focusTerminal = (e) => {
             if (term && !e.target.closest('button')) {
                 setTimeout(() => term.focus(), 10);
             }
-        });
+        };
+        hostEl.addEventListener('mousedown', focusTerminal);
+        hostEl.addEventListener('touchstart', focusTerminal, { passive: true });
 
-        // ResizeObserver: следим за изменением размера контейнера
-        resizeObserver = new ResizeObserver(() => {
-            if (resizeTimer) clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(() => {
-                try { fitAddon.fit(); } catch (e) {}
-            }, 100);
-        });
-        resizeObserver.observe(elTermHost);
+        // 1. Отслеживаем изменение размера самого контейнера
+        if (window.ResizeObserver) {
+            resizeObserver = new ResizeObserver(() => {
+                if (resizeTimer) clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(doFit, 100);
+            });
+            resizeObserver.observe(elTermHost);
+        }
+
+        // 2. Отслеживаем изменение размера окна браузера / WM-окна
+        window.addEventListener('resize', onWindowResize);
+
+        // 3. Принудительный ресайз после полного открытия модалки
+        setTimeout(doFit, 300);
+        setTimeout(doFit, 800);
     }
 
     function connect() {
@@ -241,6 +265,7 @@ FAR._createConsole = function (hostEl, opts) {
         es.addEventListener('ready', function () {
             S.connected = true;
             setStatus('Подключено', 'online');
+            setTimeout(doFit, 100);
         });
 
         es.addEventListener('output', function (e) {
@@ -289,10 +314,13 @@ FAR._createConsole = function (hostEl, opts) {
         const ctx = FAR.side && FAR.side[FAR.activePanel];
         const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
         const token = FAR.authToken || FAR.readCookieToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
         try {
             await fetch(baseUrl + '/api/console/input', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                headers: headers,
                 body: JSON.stringify({ data: '\x03' }) // Ctrl+C
             });
         } catch (e) {}
@@ -307,6 +335,7 @@ FAR._createConsole = function (hostEl, opts) {
         destroy: function () {
             S.destroyed = true;
             if (resizeTimer) clearTimeout(resizeTimer);
+            window.removeEventListener('resize', onWindowResize);
             if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
             if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
             if (term) { try { term.dispose(); } catch (e) {} term = null; }
@@ -327,7 +356,6 @@ FAR.initConsole = function () {
 
 FAR.WM.registerConsoleApp = function () {
     if (FAR.WM.getApp && FAR.WM.getApp('console')) return;
-
     if (typeof FAR.WM.registerApp !== 'function') return;
 
     FAR.WM.registerApp({
