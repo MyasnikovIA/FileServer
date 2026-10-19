@@ -26,7 +26,7 @@ public class FileServer {
     private static FileWatcher fileWatcher;
     private static Path webRoot;
     private static ConsoleService consoleService;
-    private static VideoChatServer videoChatServer; // <-- НОВОЕ
+    private static VideoChatServer videoChatServer;
 
     private static StaticHandler staticHandler;
     private static RootHandler   rootHandler;
