@@ -2410,6 +2410,10 @@ FAR.WM._mountSideConnUI = function (win, side) {
         '<input data-role="pass" type="password" placeholder="••••••••" ' +
         'style="width:100%;margin-top:4px;padding:8px;background:#313244;border:1px solid #45475a;border-radius:5px;color:#cdd6f4;font-family:monospace;"></label>' +
 
+        '<div style="font-size:11px;color:#a6adc8;padding:6px 10px;background:#181825;border-left:2px solid #89b4fa;border-radius:4px;margin-top:4px;">' +
+        'Если сервер в локальной сети и недоступен напрямую — соединение пойдёт через прокси текущего сервера автоматически.' +
+        '</div>' +
+
         '<div data-role="error" style="color:#f38ba8;font-size:12px;min-height:16px;"></div>' +
         '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">' +
         '<button data-role="cancel" style="padding:8px 18px;background:#585b70;color:#cdd6f4;border:none;border-radius:5px;cursor:pointer;">Отмена</button>' +

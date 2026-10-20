@@ -7,6 +7,7 @@
 // PouchDB / CouchDB не поддерживаются.
 // ============================================================
 
+
 FAR.getDefaultConn = function () {
     const proto = location.protocol === 'file:' ? 'http:' : location.protocol;
     const host  = location.hostname || '127.0.0.1';
@@ -17,13 +18,13 @@ FAR.getDefaultConn = function () {
     };
 };
 
+
 FAR.loadConnFromLS = function () {
     try {
         const raw = localStorage.getItem(FAR.LS_KEY);
         if (!raw) return null;
         const obj = JSON.parse(raw);
         if (!obj || !obj.url) return null;
-        // Старые конфиги CouchDB содержали поле "db" — игнорируем их
         if (obj.db) return null;
         return obj;
     } catch (e) {
@@ -32,8 +33,6 @@ FAR.loadConnFromLS = function () {
 };
 
 FAR.saveConnToLS = function (cfg) {
-    // Токен НЕ сохраняем — он короткоживущий, при перезапуске
-    // клиент заново вызовет /api/login.
     const safe = {
         url:  FAR.normalizeServerUrl(cfg.url),
         user: cfg.user || '',
@@ -47,6 +46,51 @@ FAR.saveConnToLS = function (cfg) {
 FAR.clearConnFromLS = function () {
     try { localStorage.removeItem(FAR.LS_KEY); } catch (e) {}
 };
+
+
+/**
+ * Проверка доступности сервера. Возвращает true, если сервер ответил (любым статусом).
+ * Использует mode: 'no-cors' — если сервер на другом origin, ответ opaque,
+ * но главное — если запрос дошёл, значит сервер доступен.
+ */
+FAR._testReachability = async function (baseUrl) {
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000);
+        await fetch(baseUrl + '/api/info?ping=' + Date.now(), {
+            method: 'GET',
+            mode: 'no-cors',
+            credentials: 'omit',
+            signal: controller.signal,
+            cache: 'no-store'
+        });
+        clearTimeout(timer);
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
+/**
+ * Строит URL прокси через текущий origin.
+ */
+FAR.buildProxyUrl = function (targetUrl) {
+    const origin = window.location.origin;
+    const b64 = FAR._base64UrlEncode(targetUrl);
+    return origin + '/api/proxy/' + b64;
+};
+
+/**
+ * URL-safe Base64 от UTF-8 строки без padding.
+ */
+FAR._base64UrlEncode = function (str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
+
 
 FAR.ensureDb = function () {
     if (!FAR.db) {
@@ -77,26 +121,46 @@ FAR.connectToDb = async function (cfg) {
         throw new Error('FsClient не загружен (js/04a-fs-client.js)');
     }
 
-    // ---- НОРМАЛИЗАЦИЯ URL ----
-    // Единая точка: см. FAR.normalizeServerUrl в 03-utils.js.
-    //   "www.host:8080"     → "http://www.host:8080"
-    //   "//host:8080"       → "http://host:8080"
-    //   "http://host:8080/" → "http://host:8080"
-    //   "https://host"      → "https://host"
-    const baseUrl = FAR.normalizeServerUrl(cfg && cfg.url);
-    if (!baseUrl) throw new Error('Не указан адрес FileServer');
+    const originalUrl = FAR.normalizeServerUrl(cfg && cfg.url);
+    if (!originalUrl) throw new Error('Не указан адрес FileServer');
 
-    // Мутируем cfg — все дальнейшие вызовы (applyConnectionToSide,
-    // saveSideConnToLS, saveConnToLS, currentConn) увидят корректный URL.
-    cfg.url = baseUrl;
+    // Сохраняем исходный URL — не мутируем на прокси
+    cfg.url = originalUrl;
+
+    let actualUrl = originalUrl;
+    let usedProxy = false;
+
+    // ---- Проверка необходимости прокси ----
+    const currentOrigin = window.location.origin;
+    let targetOrigin = '';
+    try {
+        targetOrigin = new URL(originalUrl).origin;
+    } catch (e) { /* invalid URL */ }
+
+    if (targetOrigin && targetOrigin !== currentOrigin) {
+        // Проверяем доступность. Если недоступен — идём через прокси текущего сервера.
+        if (typeof FAR.updateLoadingSub === 'function') {
+            FAR.updateLoadingSub('Проверка доступности ' + originalUrl + '…');
+        }
+        const reachable = await FAR._testReachability(originalUrl);
+        if (!reachable) {
+            actualUrl = FAR.buildProxyUrl(originalUrl);
+            usedProxy = true;
+            console.log('[connect] Прямое подключение недоступно, используем прокси:', actualUrl);
+            if (typeof FAR.setStatus === 'function') {
+                FAR.setStatus('🔀 Подключение через прокси…');
+            }
+        }
+    }
+
+    cfg._proxy = usedProxy;
 
     let token = '';
 
-    // Если указан пользователь — логинимся и получаем токен
     if (cfg.user) {
         let loginRes;
         try {
-            loginRes = await FAR.FsClient.login(baseUrl, cfg.user, cfg.pass || '');
+            loginRes = await FAR.FsClient.login(actualUrl, cfg.user, cfg.pass || '');
         } catch (e) {
             if (e.status === 401) {
                 const err = new Error('Неверный логин или пароль (401)');
@@ -114,32 +178,35 @@ FAR.connectToDb = async function (cfg) {
         if (!token) throw new Error('Сервер не выдал токен');
     }
 
-    const client = new FAR.FsClient(baseUrl, {
+    const client = new FAR.FsClient(actualUrl, {
         user:  cfg.user || '',
         pass:  cfg.pass || '',
         token: token
     });
+    client._isProxy = usedProxy;
+    client._originalUrl = originalUrl;
 
     const info = await client.info();
-    // ---- Пробрасываем флаг console наверх ----
+
     FAR.consoleEnabled = !!info.console;
 
-    // ---- Пробрасываем настройки VideoChat ----
     FAR.videoChatEnabled = !!info.videoChatEnabled;
     FAR.videoChatPort = (typeof info.videoChatPort === 'number' && info.videoChatPort > 0)
         ? info.videoChatPort
         : 8081;
 
-    FAR.registerServer(baseUrl);
+    // Регистрируем как "свой" сервер — только для прямого подключения.
+    // Для прокси-URL не регистрируем (FsClient сам управляет токеном).
+    if (!usedProxy) {
+        FAR.registerServer(actualUrl);
+    }
 
     if (FAR.consoleEnabled && typeof FAR.WM !== 'undefined'
         && typeof FAR.WM.registerConsoleApp === 'function') {
         FAR.WM.registerConsoleApp();
-        console.log('[console] приложение Console зарегистрировано');
     } else if (typeof FAR.WM !== 'undefined'
         && typeof FAR.WM.unregisterConsoleApp === 'function') {
         FAR.WM.unregisterConsoleApp();
-        console.log('[console] приложение Console не разрешено');
     }
 
     await client.allDocs({ limit: 1 });
@@ -147,7 +214,8 @@ FAR.connectToDb = async function (cfg) {
     return {
         db:      client,
         info:    info,
-        fullUrl: FAR.connLabel({ url: baseUrl, user: cfg.user || '' }),
-        token:   token
+        fullUrl: FAR.connLabel({ url: originalUrl, user: cfg.user || '' }),
+        token:   token,
+        proxy:   usedProxy
     };
 };

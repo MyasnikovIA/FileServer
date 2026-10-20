@@ -376,9 +376,14 @@ FAR.buildDirectFileUrl = function (item, side) {
 
     side = side || FAR.activePanel;
     const ctx = FAR.side[side];
-    if (!ctx || !ctx.conn || !ctx.conn.url) return null;
+    if (!ctx || !ctx.db) return null;
 
-    const baseUrl = String(ctx.conn.url).replace(/\/+$/, '');
+    const effectiveUrl = String(ctx.db.baseUrl || '').replace(/\/+$/, '');
+    const originalUrl  = String((ctx.conn && ctx.conn.url) || '').replace(/\/+$/, '');
+    if (!effectiveUrl) return null;
+
+    const isProxy = effectiveUrl !== originalUrl;
+
     const path = FAR.normPath(item.path);
     if (!path) return null;
 
@@ -388,7 +393,15 @@ FAR.buildDirectFileUrl = function (item, side) {
         .map(encodeURIComponent)
         .join('/');
 
-    return baseUrl + '/' + encoded;
+    let url = effectiveUrl + '/' + encoded;
+
+    // Для прокси-подключений пробрасываем токен в URL, чтобы <img>, <video>,
+    // <a href> и прочие нативные запросы авторизовались.
+    if (isProxy && ctx.db.token) {
+        url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(ctx.db.token);
+    }
+
+    return url;
 };
 
 /**

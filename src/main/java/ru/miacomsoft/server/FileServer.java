@@ -1,6 +1,7 @@
 package ru.miacomsoft.server;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.json.JSONObject;
 
@@ -80,7 +81,12 @@ public class FileServer {
         server.createContext("/api",        new ApiHandler());
         server.createContext("/",           rootHandler);
         server.createContext("/api/console", new ConsoleHandler());
-
+        server.createContext("/api/proxy",   new HttpHandler() {
+            @Override
+            public void handle(com.sun.net.httpserver.HttpExchange ex) throws java.io.IOException {
+                ProxyHandler.handle(ex);
+            }
+        });
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
 

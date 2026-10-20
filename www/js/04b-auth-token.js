@@ -78,7 +78,9 @@ FAR.unregisterServer = function (url) {
 FAR._isOurServer = function (url) {
     if (!url || typeof url !== 'string') return false;
     for (const srv of FAR._knownServers) {
-        if (url.startsWith(srv)) return true;
+        if (url === srv || url.startsWith(srv + '/') || url.startsWith(srv + '?')) {
+            return true;
+        }
     }
     return false;
 };
