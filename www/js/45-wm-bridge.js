@@ -622,7 +622,6 @@ FAR.WM._explorerNavigate = async function (win, side, targetPath) {
 // ============================================================
 // Контекстное меню (ПКМ) в окне Проводника (WM-режим).
 // ============================================================
-
 FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const menu = document.getElementById('wmContextMenu');
     if (!menu) return;
@@ -682,9 +681,17 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const isHtml = isFile
         && typeof FAR.isHtmlFile === 'function'
         && FAR.isHtmlFile(selectedItem);
+    const isText = isFile
+        && typeof FAR.isTextFile === 'function'
+        && FAR.isTextFile(selectedItem);
 
     add('📤 Загрузить',     hasDb, withSide(function () { FAR.uploadFile(); }));
     add('📁 Создать папку', hasDb, withSide(function () { FAR.createFolder(); }));
+
+    add('📝 Редактировать (Notepad++)', hasDb && isText, withSide(function () {
+        const it = getSelectedItem();
+        if (it) FAR.WM.openApp('texteditor', { props: { file: it, side: side } });
+    }));
 
     add('🌐 Открыть в браузере', hasDb && isHtml, withSide(function () {
         const it = getSelectedItem();
@@ -2352,6 +2359,11 @@ FAR.WM._installOpenFileWrapper = function () {
                 if (isPano) {
                     return FAR.WM.openApp('panorama', { props: { file: item, side: side } });
                 }
+            }
+
+            // Текстовые файлы — в Notepad++
+            if (typeof FAR.isTextFile === 'function' && FAR.isTextFile(item)) {
+                return FAR.WM.openApp('texteditor', { props: { file: item, side: side } });
             }
         } catch (e) {
             console.warn('[WM openFile] проверка типа:', e);
