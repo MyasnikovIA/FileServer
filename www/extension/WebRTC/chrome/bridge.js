@@ -22,7 +22,8 @@
                 type: 'page-start-broadcast',
                 room: (payload && payload.room) || 'main',
                 source: (payload && payload.source) || 'camera',
-                host: host
+                host: host,
+                secure: location.protocol === 'https:'
             }).then(reply).catch((err) => reply({ ok: false, error: err.message }));
             return;
         }

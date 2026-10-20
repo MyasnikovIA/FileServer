@@ -1,18 +1,30 @@
 package ru.miacomsoft.server;
 
 import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import org.json.JSONObject;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.KeyFactory;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Base64;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -57,8 +69,6 @@ public class FileServer {
         webRoot = Paths.get(webPathStr).toAbsolutePath().normalize();
         if (!Files.isDirectory(webRoot)) {
             System.err.println("[FileServer] WARNING: web directory not found: " + webRoot);
-            System.err.println("[FileServer] Static files will return 404. " +
-                    "Create the directory or fix 'web' in config.json.");
         }
 
         tokens = new TokenService();
@@ -71,8 +81,23 @@ public class FileServer {
                 config.consoleTimeoutSec,
                 config.consoleMaxOutputBytes);
 
-        HttpServer server = HttpServer.create(
-                new InetSocketAddress(config.host, config.port), 0);
+        HttpServer server;
+        InetSocketAddress addr = new InetSocketAddress(config.host, config.port);
+        SSLContext sslContext = null;
+
+        // ============================================================
+        // ЛОГИКА ВЫБОРА HTTP ИЛИ HTTPS
+        // ============================================================
+        if (config.httpsEnabled && (!config.httpsKeystore.isEmpty() || !config.httpsCert.isEmpty())) {
+            sslContext = createSSLContext();
+            HttpsServer httpsServer = HttpsServer.create(addr, 0);
+            httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext));
+            server = httpsServer;
+            System.out.println("[FileServer] HTTPS mode enabled");
+        } else {
+            server = HttpServer.create(addr, 0);
+            System.out.println("[FileServer] HTTP mode enabled");
+        }
 
         staticHandler = new StaticHandler(webRoot);
         rootHandler   = new RootHandler(staticHandler);
@@ -81,21 +106,20 @@ public class FileServer {
         server.createContext("/api",        new ApiHandler());
         server.createContext("/",           rootHandler);
         server.createContext("/api/console", new ConsoleHandler());
-        server.createContext("/api/proxy",   new com.sun.net.httpserver.HttpHandler() {
-            @Override
-            public void handle(com.sun.net.httpserver.HttpExchange ex) throws java.io.IOException {
-                ProxyHandler.handle(ex);
-            }
-        });
+
+        // Контекст для прокси
+        server.createContext("/api/proxy",   ex -> ProxyHandler.handle(ex));
+
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
 
-        // Запуск VideoChat
+        // ============================================================
+        // ЗАПУСК VIDEOCHAT (с переданным SSLContext или null)
+        // ============================================================
         if (config.videoChatEnabled) {
-            videoChatServer = new VideoChatServer(config.videoChatPort, config.wsGuid);
+            videoChatServer = new VideoChatServer(config.videoChatPort, config.wsGuid, sslContext);
             try {
                 videoChatServer.start();
-                System.out.println("[FileServer] VideoChat started on port " + config.videoChatPort);
             } catch (Exception e) {
                 System.err.println("[FileServer] Failed to start VideoChat: " + e.getMessage());
             }
@@ -104,18 +128,55 @@ public class FileServer {
         startWatcher();
 
         System.out.println("[FileServer] started");
-        System.out.println("  listen   : http://" + config.host + ":" + config.port);
-        System.out.println("  web root : " + webRoot +
-                (Files.isDirectory(webRoot) ? "" : "  [NOT FOUND]"));
+        String proto = config.httpsEnabled ? "https" : "http";
+        System.out.println("  listen   : " + proto + "://" + config.host + ":" + config.port);
+        System.out.println("  web root : " + webRoot + (Files.isDirectory(webRoot) ? "" : "  [NOT FOUND]"));
         System.out.println("  users    : " + config.users.keySet());
         System.out.println("  shares   : " + config.shares.size());
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try { server.stop(0); } catch (Exception ignored) {}
             try { if (fileWatcher != null) fileWatcher.stop(); } catch (Exception ignored) {}
-            try { if (videoChatServer != null) videoChatServer.stop(); } catch (Exception ignored) {} // <-- НОВОЕ
+            try { if (videoChatServer != null) videoChatServer.stop(); } catch (Exception ignored) {}
             for (SseConnection c : sseClients.values()) c.close();
         }));
+    }
+
+    /**
+     * Создает SSLContext из PEM-файлов (сертификата и ключа).
+     */
+    private static SSLContext createSSLContext() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+
+        if (!config.httpsKeystore.isEmpty()) {
+            // Новый способ: загружаем готовый бинарный .p12
+            try (InputStream is = Files.newInputStream(Paths.get(config.httpsKeystore))) {
+                keyStore.load(is, config.httpsPassword.toCharArray());
+            }
+        } else {
+            // Старый способ (для обратной совместимости с PEM)
+            String certPem = new String(Files.readAllBytes(Paths.get(config.httpsCert)), StandardCharsets.UTF_8);
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            Collection<? extends Certificate> certs = cf.generateCertificates(new ByteArrayInputStream(certPem.getBytes(StandardCharsets.UTF_8)));
+            Certificate[] certChain = certs.toArray(new Certificate[0]);
+
+            String keyPem = new String(Files.readAllBytes(Paths.get(config.httpsKey)), StandardCharsets.UTF_8);
+            String privateKeyPEM = keyPem.replaceAll("-----(BEGIN|END) (RSA )?PRIVATE KEY-----", "").replaceAll("\\s", "");
+            byte[] encoded = Base64.getDecoder().decode(privateKeyPEM);
+
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            PrivateKey privateKey = kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+
+            keyStore.load(null, null);
+            keyStore.setKeyEntry("server", privateKey, new char[0], certChain);
+        }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, config.httpsPassword.isEmpty() ? null : config.httpsPassword.toCharArray());
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(kmf.getKeyManagers(), null, null);
+        return sslContext;
     }
 
     private static void startWatcher() {
@@ -140,7 +201,6 @@ public class FileServer {
     static TokenService tokens() { return tokens; }
     static QuotaService quota() { return quota; }
     static Path webRoot() { return webRoot; }
-
     static RootHandler rootHandler() { return rootHandler; }
     static StaticHandler staticHandler() { return staticHandler; }
 
@@ -161,10 +221,8 @@ public class FileServer {
         }
 
         ex.getResponseHeaders().set("Access-Control-Allow-Credentials", "true");
-        ex.getResponseHeaders().set("Access-Control-Allow-Methods",
-                "GET, POST, PUT, DELETE, OPTIONS, HEAD");
-        ex.getResponseHeaders().set("Access-Control-Allow-Headers",
-                "Content-Type, Authorization, X-Auth-Token, X-Requested-With");
+        ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
+        ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Auth-Token, X-Requested-With");
         ex.getResponseHeaders().set("Access-Control-Max-Age", "86400");
     }
 
@@ -199,14 +257,13 @@ public class FileServer {
         for (String pair : query.split("&")) {
             int idx = pair.indexOf('=');
             if (idx < 0) result.put(urlDecode(pair), "");
-            else result.put(urlDecode(pair.substring(0, idx)),
-                    urlDecode(pair.substring(idx + 1)));
+            else result.put(urlDecode(pair.substring(0, idx)), urlDecode(pair.substring(idx + 1)));
         }
         return result;
     }
 
     static String urlDecode(String s) {
-        try { return URLDecoder.decode(s, "UTF-8"); }
+        try { return java.net.URLDecoder.decode(s, "UTF-8"); }
         catch (Exception e) { return s; }
     }
     static ConsoleService console() { return consoleService; }

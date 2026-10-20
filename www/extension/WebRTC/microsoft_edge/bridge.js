@@ -3,6 +3,9 @@
 // Content script работает так же, как в Chrome:
 //   • chrome.runtime.sendMessage возвращает Promise (Edge 88+);
 //   • location.hostname доступен без дополнительных разрешений.
+//
+// ОБНОВЛЕНО: пробрасываем флаг secure (true, если страница открыта по HTTPS),
+// чтобы capture.js мог выбрать wss:// вместо ws://.
 
 (() => {
     // Сообщаем странице, что расширение готово
@@ -28,7 +31,8 @@
                 type: 'page-start-broadcast',
                 room: (payload && payload.room) || 'main',
                 source: (payload && payload.source) || 'camera',
-                host: host
+                host: host,
+                secure: location.protocol === 'https:' // <-- ДОБАВЛЕНО
             })
                 .then(reply)
                 .catch((err) => reply({ ok: false, error: err && err.message }));

@@ -17,6 +17,7 @@ const params = new URLSearchParams(location.search);
 const room = params.get('room') || 'main';
 const host = params.get('host') || 'localhost';
 const source = params.get('source') || 'camera'; // 'camera' или 'screen'
+const isSecure = params.get('secure') === '1';   // <--- ЧИТАЕМ ФЛАГ
 
 const statusEl  = document.getElementById('status');
 const viewersEl = document.getElementById('viewers');
@@ -46,7 +47,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (source === 'screen') {
             setStatus('Запрос доступа к экрану...');
             // В Firefox getDisplayMedia принимает { video: { ... }, audio?: boolean }.
-            // cursor: "always" — Chrome-специфичный параметр; Firefox его проигнорирует.
             stream = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                     cursor: 'always'
@@ -70,8 +70,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         preview.srcObject = stream;
 
-        // Если пользователь остановил трансляцию через всплывающую панель браузера
-        // (обычно внизу экрана при шаринге), срабатывает onended
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
             videoTrack.onended = () => {
@@ -80,7 +78,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
         }
 
-        const wsUrl = `ws://${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
+        // ВЫБИРАЕМ ПРОТОКОЛ
+        const wsProto = isSecure ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProto}//${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
         setStatus(`Подключение к ${wsUrl}...`);
 
         ws = new WebSocket(wsUrl);
@@ -94,19 +94,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             let msg;
             try { msg = JSON.parse(event.data); } catch (e) { return; }
 
-            // Новый зритель — создаём peer и отправляем offer
             if (msg.viewerJoined) {
                 handleViewerJoined(msg.viewerJoined);
                 return;
             }
 
-            // Зритель ушёл — закрываем peer
             if (msg.viewerLeft) {
                 closePeer(msg.viewerLeft);
                 return;
             }
 
-            // Ответ (SDP answer) от зрителя
             if (msg.viewerId && msg.sdp && msg.sdp.type === 'answer') {
                 const pc = peers.get(msg.viewerId);
                 if (pc) {
@@ -116,7 +113,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            // ICE-кандидат от зрителя
             if (msg.viewerId && msg.candidate) {
                 const pc = peers.get(msg.viewerId);
                 if (pc) {
@@ -148,16 +144,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ============================================================
 
 async function handleViewerJoined(viewerId) {
-    closePeer(viewerId);   // на случай переподключения
+    closePeer(viewerId);
 
     const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
-    // Добавляем локальные треки
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-    // Отправка ICE-кандидатов конкретному зрителю
     pc.onicecandidate = (event) => {
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({

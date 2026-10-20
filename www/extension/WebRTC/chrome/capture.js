@@ -6,6 +6,8 @@ const params = new URLSearchParams(location.search);
 const room = params.get('room') || 'main';
 const host = params.get('host') || 'localhost';
 const source = params.get('source') || 'camera'; // 'camera' или 'screen'
+// Получаем флаг безопасности из параметров URL
+const isSecure = params.get('secure') === '1';
 
 const statusEl  = document.getElementById('status');
 const viewersEl = document.getElementById('viewers');
@@ -69,7 +71,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
         }
 
-        const wsUrl = `ws://${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
+        // ВЫБИРАЕМ ПРОТОКОЛ: wss для HTTPS, ws для HTTP
+        const wsProto = isSecure ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProto}//${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
         setStatus(`Подключение к ${wsUrl}...`);
 
         ws = new WebSocket(wsUrl);
@@ -210,4 +214,8 @@ function stop() {
 
 stopBtn.onclick = stop;
 window.addEventListener('beforeunload', cleanup);
-chrome.runtime.onMessage.addListener((msg) => { if (msg.type === 'stop') stop(); });
+
+// Обработчик stop-сообщения от background
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'stop') stop();
+});

@@ -14,7 +14,8 @@ FAR.Broadcaster.state = {
     source: 'camera',       // 'camera' | 'screen'
     _msgId: 0,
     _pending: new Map(),    // __id → { resolve, reject, timer }
-    _listenerInstalled: false
+    _listenerInstalled: false,
+    _nativePopup: null
 };
 
 // Колбэк для UI — переопределяется в _createBroadcasterUI
@@ -157,268 +158,13 @@ FAR.Broadcaster.start = async function (room, source) {
     return resp;
 };
 
-FAR.Broadcaster.stop = async function () {
-    // Если открыт нативный popup - закрываем
-    if (FAR.Broadcaster._nativePopup && !FAR.Broadcaster._nativePopup.closed) {
-        try { FAR.Broadcaster._nativePopup.postMessage({ type: 'stop-broadcast' }, '*'); } catch (e) {}
-        setTimeout(() => { try { FAR.Broadcaster._nativePopup.close(); } catch (e) {} }, 300);
-        FAR.Broadcaster._nativePopup = null;
-    }
-    FAR.Broadcaster.state.started = false;
-
-    // Если плагин - отправляем stop
-    if (FAR.Broadcaster.state.detected) {
-        try {
-            const resp = await FAR.Broadcaster._send('stop-broadcast', {}, 3000);
-            return resp;
-        } catch (e) {
-            throw e;
-        }
-    }
-    return { ok: true };
-};
-
-FAR.Broadcaster.getDefaultRoom = function () {
-    try {
-        return localStorage.getItem('filebd_vc_broadcast_room') || 'main';
-    } catch (e) { return 'main'; }
-};
-
-// ============================================================
-// Публичное API: открыть лаунчер
-// ============================================================
-
-FAR.openBroadcaster = function (opts) {
-    opts = opts || {};
-
-    if (!FAR.videoChatEnabled) {
-        FAR.toast('Трансляции отключены на сервере (videochat.enabled = false)', 'warning');
-        return;
-    }
-
-    if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active
-        && FAR.WM.getApp && FAR.WM.getApp('broadcaster')) {
-        return FAR.WM.openApp('broadcaster', { props: opts });
-    }
-
-    FAR._openBroadcasterModal(opts);
-};
-
-FAR._bcModalApi = null;
-
-FAR._openBroadcasterModal = function (opts) {
-    const modal = document.getElementById('videoChatBroadcasterModal');
-    const host  = document.getElementById('videoChatBroadcasterHost');
-    const title = document.getElementById('videoChatBroadcasterTitle');
-
-    if (!modal || !host) return;
-
-    if (FAR._bcModalApi) {
-        try { FAR._bcModalApi.destroy(); } catch (e) {}
-        FAR._bcModalApi = null;
-    }
-
-    if (title) title.textContent = '🎥 Начать трансляцию';
-
-    FAR._bcModalApi = FAR._createBroadcasterUI(host, opts);
-    modal.classList.remove('hidden');
-};
-
-FAR.closeBroadcaster = function () {
-    const modal = document.getElementById('videoChatBroadcasterModal');
-    if (modal) modal.classList.add('hidden');
-
-    if (FAR._bcModalApi) {
-        try { FAR._bcModalApi.destroy(); } catch (e) {}
-        FAR._bcModalApi = null;
-    }
-};
-
-FAR.closeBroadcasterOutside = function (e) {
-    if (e.target === e.currentTarget) FAR.closeBroadcaster();
-};
-
-// ============================================================
-// Shared-core: UI лаунчера
-// ============================================================
-
-FAR._createBroadcasterUI = function (hostEl, opts) {
-    opts = opts || {};
-    if (!hostEl) throw new Error('_createBroadcasterUI: hostEl required');
-
-    const wsPort = FAR.videoChatPort || 8081;
-    const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost';
-
-    hostEl.innerHTML =
-        '<div class="vc-bc-block">' +
-        '<div class="vc-bc-status-row" data-role="status-row">' +
-        '<span class="vc-bc-status-icon" data-role="status-icon">⏳</span>' +
-        '<div class="vc-bc-status-text" data-role="status-text">Проверка статуса…</div>' +
-        '</div>' +
-        '<div class="vc-bc-field">' +
-        '<label for="vcBcSource">Источник видео</label>' +
-        '<select id="vcBcSource" class="vc-bc-input">' +
-        '<option value="camera">📷 Веб-камера</option>' +
-        '<option value="screen">🖥️ Экран монитора</option>' +
-        '</select>' +
-        '</div>' +
-        '<div class="vc-bc-field">' +
-        '<label for="vcBcRoom">Комната (Room)</label>' +
-        '<input type="text" id="vcBcRoom" class="vc-bc-input" autocomplete="off" spellcheck="false">' +
-        '</div>' +
-        '<div class="vc-bc-actions">' +
-        '<button class="vc-bc-btn vc-bc-start" data-role="start">▶ Начать трансляцию</button>' +
-        '<button class="vc-bc-btn vc-bc-stop"  data-role="stop" disabled>■ Остановить</button>' +
-        '<button class="vc-bc-btn vc-bc-watch" data-role="watch" disabled>📺 Смотреть</button>' +
-        '</div>' +
-        '<div class="vc-bc-hint">' +
-        '💡 Трансляция идёт через P2P WebRTC: медиа передаётся напрямую ' +
-        'зрителям, сервер используется только для сигналинга. ' +
-        'Порт <code>' + FAR.escapeHtml(String(wsPort)) + '</code> должен быть открыт.' +
-        '</div>' +
-        '</div>';
-
-    const statusRow  = hostEl.querySelector('[data-role="status-row"]');
-    const statusIcon = hostEl.querySelector('[data-role="status-icon"]');
-    const statusText = hostEl.querySelector('[data-role="status-text"]');
-    const sourceSelect = hostEl.querySelector('#vcBcSource');
-    const roomInput  = hostEl.querySelector('#vcBcRoom');
-    const startBtn   = hostEl.querySelector('[data-role="start"]');
-    const stopBtn    = hostEl.querySelector('[data-role="stop"]');
-    const watchBtn   = hostEl.querySelector('[data-role="watch"]');
-
-    roomInput.value = opts.room || FAR.Broadcaster.getDefaultRoom();
-    if (opts.source) sourceSelect.value = opts.source;
-
-    function setStatus(icon, textHtml, cls) {
-        statusIcon.textContent = icon;
-        statusText.innerHTML = textHtml;
-        statusRow.className = 'vc-bc-status-row' + (cls ? ' ' + cls : '');
-    }
-
-    function updateButtons() {
-        const detected = FAR.Broadcaster.state.detected;
-        const started = FAR.Broadcaster.state.started;
-        startBtn.disabled = (!detected && !isSecure) || started;
-        stopBtn.disabled  = !started;
-        watchBtn.disabled = !started;
-        roomInput.disabled = started;
-        sourceSelect.disabled = started;
-    }
-
-    function render() {
-        const detected = FAR.Broadcaster.state.detected;
-        const started = FAR.Broadcaster.state.started;
-        const room = FAR.Broadcaster.state.room || roomInput.value || 'main';
-        const src = FAR.Broadcaster.state.source === 'screen' ? 'Экран' : 'Камера';
-
-        if (started) {
-            setStatus(
-                '🔴',
-                'Трансляция (' + src + ') запущена в комнате <b>' + FAR.escapeHtml(room) + '</b>.' +
-                '<br><small>Окно с захватом открылось отдельно. Разрешите доступ.</small>',
-                'ok'
-            );
-        } else if (isSecure) {
-            setStatus('✅', 'Режим HTTPS: трансляция доступна без плагина.', 'ok');
-        } else if (detected) {
-            setStatus('✅', 'Плагин <b>Video Chat Broadcaster</b> обнаружен.', 'ok');
-        } else {
-            // HTTP - нужен плагин, показываем кнопку скачивания
-            const ua = navigator.userAgent;
-            let browserName = "Browser";
-            let downloadPath = "extension/WebRTC";
-            if (ua.indexOf("Edg") > -1) { browserName = "Edge"; downloadPath = "extension/WebRTC/microsoft_edge"; }
-            else if (ua.indexOf("Firefox") > -1) { browserName = "Firefox"; downloadPath = "extension/WebRTC/firefox"; }
-            else if (ua.indexOf("Chrome") > -1) { browserName = "Chrome"; downloadPath = "extension/WebRTC/chrome"; }
-
-            const downloadBtnHtml =
-                '<br><br>' +
-                '<button id="btn-dl-plugin" style="padding:6px 14px;background:#89b4fa;color:#1e1e2e;border:none;border-radius:4px;font-weight:bold;font-size:13px;cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.2);">' +
-                '📥 Скачать плагин (.zip) для ' + browserName + '</button>';
-
-            setStatus('❌', 'Плагин <b>Video Chat Broadcaster</b> не обнаружен.<br><small>Установите расширение или перейдите на HTTPS.</small>' + downloadBtnHtml, 'err');
-
-            const dlBtn = statusText.querySelector('#btn-dl-plugin');
-            if (dlBtn) {
-                dlBtn.onclick = function() { FAR.Broadcaster.downloadExtensionZip(downloadPath, browserName); };
-            }
-        }
-        updateButtons();
-    }
-
-    async function detectWithRetries() {
-        if (isSecure) { render(); return; } // Если HTTPS, плагин не проверяем
-        if (FAR.Broadcaster.state.detected) { render(); return; }
-        for (let i = 0; i < 4; i++) {
-            const ok = await FAR.Broadcaster.detect(1000);
-            if (ok) break;
-            await new Promise(function (r) { setTimeout(r, 400); });
-        }
-        render();
-    }
-
-    startBtn.addEventListener('click', async function () {
-        const room = (roomInput.value || '').trim() || 'main';
-        const source = sourceSelect.value;
-        startBtn.disabled = true;
-        startBtn.textContent = '⏳ Запуск…';
-
-        try {
-            await FAR.Broadcaster.start(room, source);
-            FAR.toast('Трансляция запущена', 'success');
-            render();
-        } catch (e) {
-            FAR.toast(e.message, 'error');
-            setStatus('❌', FAR.escapeHtml(e.message), 'err');
-            startBtn.disabled = false;
-            startBtn.textContent = '▶ Начать трансляцию';
-        }
-    });
-
-    stopBtn.addEventListener('click', async function () {
-        stopBtn.disabled = true;
-        try {
-            await FAR.Broadcaster.stop();
-            FAR.toast('Трансляция остановлена', 'info');
-            render();
-        } catch (e) {
-            FAR.toast('Не удалось остановить: ' + e.message, 'warning');
-            stopBtn.disabled = false;
-        }
-    });
-
-    watchBtn.addEventListener('click', function () {
-        const room = FAR.Broadcaster.state.room || roomInput.value || 'main';
-        FAR.openVideoChat({ room: room, autoConnect: true });
-    });
-
-    roomInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            if (!startBtn.disabled) startBtn.click();
-        }
-    });
-
-    FAR.Broadcaster.onStateChange = function () { render(); };
-
-    render();
-    detectWithRetries();
-
-    return {
-        destroy: function () {
-            FAR.Broadcaster.onStateChange = null;
-            hostEl.innerHTML = '';
-        }
-    };
-};
-
 FAR.Broadcaster.startNative = function (room, source) {
     room = String(room || 'main').trim() || 'main';
     source = source || 'camera';
 
     const wsPort = FAR.videoChatPort || 8081;
     const host = location.hostname;
+    // Определяем протокол: wss для HTTPS, ws для HTTP
     const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = wsProto + '//' + host + ':' + wsPort + '/ws/publish?room=' + encodeURIComponent(room);
 
@@ -591,6 +337,316 @@ FAR.Broadcaster.startNative = function (room, source) {
     popup.document.close();
 };
 
+FAR.Broadcaster.stop = async function () {
+    // Если открыт нативный popup - закрываем
+    if (FAR.Broadcaster._nativePopup && !FAR.Broadcaster._nativePopup.closed) {
+        try { FAR.Broadcaster._nativePopup.postMessage({ type: 'stop-broadcast' }, '*'); } catch (e) {}
+        setTimeout(() => { try { FAR.Broadcaster._nativePopup.close(); } catch (e) {} }, 300);
+        FAR.Broadcaster._nativePopup = null;
+    }
+    FAR.Broadcaster.state.started = false;
+
+    // Если плагин - отправляем stop
+    if (FAR.Broadcaster.state.detected) {
+        try {
+            const resp = await FAR.Broadcaster._send('stop-broadcast', {}, 3000);
+            return resp;
+        } catch (e) {
+            throw e;
+        }
+    }
+    return { ok: true };
+};
+
+FAR.Broadcaster.getDefaultRoom = function () {
+    try {
+        return localStorage.getItem('filebd_vc_broadcast_room') || 'main';
+    } catch (e) { return 'main'; }
+};
+
+// ============================================================
+// Публичное API: открыть лаунчер
+// ============================================================
+
+FAR.openBroadcaster = function (opts) {
+    opts = opts || {};
+
+    if (!FAR.videoChatEnabled) {
+        FAR.toast('Трансляции отключены на сервере (videochat.enabled = false)', 'warning');
+        return;
+    }
+
+    if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active
+        && FAR.WM.getApp && FAR.WM.getApp('broadcaster')) {
+        return FAR.WM.openApp('broadcaster', { props: opts });
+    }
+
+    FAR._openBroadcasterModal(opts);
+};
+
+FAR._bcModalApi = null;
+
+FAR._openBroadcasterModal = function (opts) {
+    const modal = document.getElementById('videoChatBroadcasterModal');
+    const host  = document.getElementById('videoChatBroadcasterHost');
+    const title = document.getElementById('videoChatBroadcasterTitle');
+
+    if (!modal || !host) return;
+
+    if (FAR._bcModalApi) {
+        try { FAR._bcModalApi.destroy(); } catch (e) {}
+        FAR._bcModalApi = null;
+    }
+
+    if (title) title.textContent = '🎥 Начать трансляцию';
+
+    FAR._bcModalApi = FAR._createBroadcasterUI(host, opts);
+    modal.classList.remove('hidden');
+};
+
+FAR.closeBroadcaster = function () {
+    const modal = document.getElementById('videoChatBroadcasterModal');
+    if (modal) modal.classList.add('hidden');
+
+    if (FAR._bcModalApi) {
+        try { FAR._bcModalApi.destroy(); } catch (e) {}
+        FAR._bcModalApi = null;
+    }
+};
+
+FAR.closeBroadcasterOutside = function (e) {
+    if (e.target === e.currentTarget) FAR.closeBroadcaster();
+};
+
+// ============================================================
+// Shared-core: UI лаунчера
+// ============================================================
+
+FAR._createBroadcasterUI = function (hostEl, opts) {
+    opts = opts || {};
+    if (!hostEl) throw new Error('_createBroadcasterUI: hostEl required');
+
+    const wsPort = FAR.videoChatPort || 8081;
+    const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost';
+
+    hostEl.innerHTML =
+        '<div class="vc-bc-block">' +
+        '<div class="vc-bc-status-row" data-role="status-row">' +
+        '<span class="vc-bc-status-icon" data-role="status-icon">⏳</span>' +
+        '<div class="vc-bc-status-text" data-role="status-text">Проверка статуса…</div>' +
+        '</div>' +
+        '<div class="vc-bc-field">' +
+        '<label for="vcBcSource">Источник видео</label>' +
+        '<select id="vcBcSource" class="vc-bc-input">' +
+        '<option value="camera">📷 Веб-камера</option>' +
+        '<option value="screen">🖥️ Экран монитора</option>' +
+        '</select>' +
+        '</div>' +
+        '<div class="vc-bc-field">' +
+        '<label for="vcBcRoom">Комната (Room)</label>' +
+        '<input type="text" id="vcBcRoom" class="vc-bc-input" autocomplete="off" spellcheck="false">' +
+        '</div>' +
+        '<div class="vc-bc-actions">' +
+        '<button class="vc-bc-btn vc-bc-start" data-role="start">▶ Начать трансляцию</button>' +
+        '<button class="vc-bc-btn vc-bc-stop"  data-role="stop" disabled>■ Остановить</button>' +
+        '<button class="vc-bc-btn vc-bc-watch" data-role="watch" disabled>📺 Смотреть</button>' +
+        '</div>' +
+        '<div class="vc-bc-hint">' +
+        '💡 Трансляция идёт через P2P WebRTC: медиа передаётся напрямую ' +
+        'зрителям, сервер используется только для сигналинга. ' +
+        'Порт <code>' + FAR.escapeHtml(String(wsPort)) + '</code> должен быть открыт.' +
+        '</div>' +
+        '</div>';
+
+    const statusRow  = hostEl.querySelector('[data-role="status-row"]');
+    const statusIcon = hostEl.querySelector('[data-role="status-icon"]');
+    const statusText = hostEl.querySelector('[data-role="status-text"]');
+    const sourceSelect = hostEl.querySelector('#vcBcSource');
+    const roomInput  = hostEl.querySelector('#vcBcRoom');
+    const startBtn   = hostEl.querySelector('[data-role="start"]');
+    const stopBtn    = hostEl.querySelector('[data-role="stop"]');
+    const watchBtn   = hostEl.querySelector('[data-role="watch"]');
+
+    roomInput.value = opts.room || FAR.Broadcaster.getDefaultRoom();
+    if (opts.source) sourceSelect.value = opts.source;
+
+    function setStatus(icon, textHtml, cls) {
+        statusIcon.textContent = icon;
+        statusText.innerHTML = textHtml;
+        statusRow.className = 'vc-bc-status-row' + (cls ? ' ' + cls : '');
+    }
+
+    function updateButtons() {
+        const detected = FAR.Broadcaster.state.detected;
+        const started = FAR.Broadcaster.state.started;
+        startBtn.disabled = (!detected && !isSecure) || started;
+        stopBtn.disabled  = !started;
+        watchBtn.disabled = !started;
+        roomInput.disabled = started;
+        sourceSelect.disabled = started;
+    }
+
+    async function downloadExtensionZip(browserPath, browserName) {
+        if (typeof JSZip === 'undefined') {
+            FAR.toast('Библиотека JSZip не загружена', 'error');
+            return;
+        }
+
+        const files = [
+            'manifest.json', 'background.js', 'bridge.js', 'capture.html', 'capture.js', 'popup.html', 'popup.js'
+        ];
+
+        const zip = new JSZip();
+        const folder = zip.folder("VideoChat_Broadcaster_" + browserName);
+
+        setStatus('⏳', 'Подготовка архива для ' + browserName + '...', '');
+
+        try {
+            for (const file of files) {
+                const url = browserPath + '/' + file;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Не найден файл: ' + file);
+                const content = await res.blob();
+                folder.file(file, content);
+            }
+
+            const blob = await zip.generateAsync({ type: 'blob' });
+            FAR.saveBlobAs(blob, "VideoChat_Broadcaster_" + browserName + ".zip");
+            FAR.toast('Архив с плагином успешно скачан', 'success');
+            render();
+        } catch (e) {
+            console.error('[Broadcaster] ZIP error:', e);
+            setStatus('❌', 'Ошибка создания архива: ' + FAR.escapeHtml(e.message) + '<br><small>Попробуйте скачать вручную из папки ' + browserPath + '</small>', 'err');
+            FAR.toast('Ошибка создания архива: ' + e.message, 'error');
+        }
+    }
+
+    function render() {
+        const detected = FAR.Broadcaster.state.detected;
+        const started = FAR.Broadcaster.state.started;
+        const room = FAR.Broadcaster.state.room || roomInput.value || 'main';
+        const src = FAR.Broadcaster.state.source === 'screen' ? 'Экран' : 'Камера';
+
+        if (started) {
+            setStatus(
+                '🔴',
+                'Трансляция (' + src + ') запущена в комнате <b>' + FAR.escapeHtml(room) + '</b>.' +
+                '<br><small>Окно с захватом открылось отдельно. Разрешите доступ.</small>',
+                'ok'
+            );
+        } else if (isSecure) {
+            setStatus('✅', 'Режим HTTPS: трансляция доступна без плагина.', 'ok');
+        } else if (detected) {
+            setStatus('✅', 'Плагин <b>Video Chat Broadcaster</b> обнаружен.', 'ok');
+        } else {
+            const ua = navigator.userAgent;
+            let browserName = "Browser";
+            let downloadPath = "extension/WebRTC";
+
+            if (ua.indexOf("Edg") > -1) {
+                browserName = "Edge";
+                downloadPath = "extension/WebRTC/microsoft_edge";
+            } else if (ua.indexOf("Firefox") > -1) {
+                browserName = "Firefox";
+                downloadPath = "extension/WebRTC/firefox";
+            } else if (ua.indexOf("Chrome") > -1) {
+                browserName = "Chrome";
+                downloadPath = "extension/WebRTC/chrome";
+            }
+
+            const downloadBtnHtml =
+                '<br><br>' +
+                '<button id="btn-dl-plugin" ' +
+                'style="padding:6px 14px;background:#89b4fa;color:#1e1e2e;' +
+                'border:none;border-radius:4px;font-weight:bold;font-size:13px;' +
+                'cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.2);">' +
+                '📥 Скачать плагин (.zip) для ' + browserName +
+                '</button>';
+
+            setStatus(
+                '❌',
+                'Плагин <b>Video Chat Broadcaster</b> не обнаружен.' +
+                '<br><small>Установите расширение или перейдите на HTTPS.</small>' +
+                downloadBtnHtml,
+                'err'
+            );
+
+            const dlBtn = statusText.querySelector('#btn-dl-plugin');
+            if (dlBtn) {
+                dlBtn.onclick = function() {
+                    downloadExtensionZip(downloadPath, browserName);
+                };
+            }
+        }
+        updateButtons();
+    }
+
+    async function detectWithRetries() {
+        if (isSecure) { render(); return; }
+        if (FAR.Broadcaster.state.detected) { render(); return; }
+        for (let i = 0; i < 4; i++) {
+            const ok = await FAR.Broadcaster.detect(1000);
+            if (ok) break;
+            await new Promise(function (r) { setTimeout(r, 400); });
+        }
+        render();
+    }
+
+    startBtn.addEventListener('click', async function () {
+        const room = (roomInput.value || '').trim() || 'main';
+        const source = sourceSelect.value;
+        startBtn.disabled = true;
+        startBtn.textContent = '⏳ Запуск…';
+
+        try {
+            await FAR.Broadcaster.start(room, source);
+            FAR.toast('Трансляция запущена', 'success');
+            render();
+        } catch (e) {
+            FAR.toast(e.message, 'error');
+            setStatus('❌', FAR.escapeHtml(e.message), 'err');
+            startBtn.disabled = false;
+            startBtn.textContent = '▶ Начать трансляцию';
+        }
+    });
+
+    stopBtn.addEventListener('click', async function () {
+        stopBtn.disabled = true;
+        try {
+            await FAR.Broadcaster.stop();
+            FAR.toast('Трансляция остановлена', 'info');
+            render();
+        } catch (e) {
+            FAR.toast('Не удалось остановить: ' + e.message, 'warning');
+            stopBtn.disabled = false;
+        }
+    });
+
+    watchBtn.addEventListener('click', function () {
+        const room = FAR.Broadcaster.state.room || roomInput.value || 'main';
+        FAR.openVideoChat({ room: room, autoConnect: true });
+    });
+
+    roomInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (!startBtn.disabled) startBtn.click();
+        }
+    });
+
+    FAR.Broadcaster.onStateChange = function () { render(); };
+
+    render();
+    detectWithRetries();
+
+    return {
+        destroy: function () {
+            FAR.Broadcaster.onStateChange = null;
+            hostEl.innerHTML = '';
+        }
+    };
+};
+
 // ============================================================
 // WM-приложение 'broadcaster'
 // ============================================================
@@ -606,7 +662,7 @@ FAR._registerBroadcasterWmApp = function () {
         keywords: 'трансляция вещание broadcast camera screen экран',
         singleton: true,
         width: 560,
-        height: 520, // Чуть увеличили высоту для нового поля
+        height: 520,
         open: async function (win, props) {
             win.el.querySelector('.wm-title-text').textContent = '🎥 Начать трансляцию';
             win.bodyEl.innerHTML = '';
@@ -646,4 +702,3 @@ document.addEventListener('keydown', function (e) {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
     FAR.closeBroadcaster();
 }, true);
-

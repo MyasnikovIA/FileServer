@@ -216,7 +216,10 @@ FAR._createVideoChatViewer = function (hostEl, opts) {
         catch (e) { host = location.hostname; }
 
         const wsPort = opts.port || FAR.videoChatPort || 8081;
-        return 'ws://' + host + ':' + wsPort +
+        // Определяем протокол: wss для HTTPS, ws для HTTP
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+        return wsProto + '//' + host + ':' + wsPort +
             '/ws/subscribe?room=' + encodeURIComponent(room);
     }
 

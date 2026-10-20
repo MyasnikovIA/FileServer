@@ -15,7 +15,14 @@ public class Config {
     public String host = "0.0.0.0";
     public String webPath = "www";
 
-    // ---- Настройки консоли (верхнеуровневые) ----
+    // --- HTTPS ---
+    public boolean httpsEnabled = false;
+    public String httpsCert = "";
+    public String httpsKey = "";
+    public String httpsKeystore = "";
+    public String httpsPassword = "";
+
+    // ---- Настройки консоли ----
     public String consoleShell = "";
     public String consoleCwd = "";
     public long consoleTimeoutSec = 300;
@@ -29,18 +36,13 @@ public class Config {
     public Map<String, User> users = new LinkedHashMap<>();
     public List<Share> shares = new ArrayList<>();
 
-    // ---------- User ----------
-
     public static class User {
         public String name = "";
         public String password = "";
         public long quotaMb = -1;
         public boolean consoleEnabled = false;
-
         public boolean hasQuota() { return quotaMb >= 0; }
     }
-
-    // ---------- Share ----------
 
     public static class Share {
         public String name = "";
@@ -54,7 +56,6 @@ public class Config {
         public boolean isFolder() { return "folder".equalsIgnoreCase(type); }
         public boolean isFile()   { return !isFolder(); }
         public boolean isRoot()   { return name == null || name.isEmpty(); }
-
         public boolean hasRead()   { return access.contains("read");   }
         public boolean hasWrite()  { return access.contains("write");  }
         public boolean hasDelete() { return access.contains("delete"); }
@@ -71,20 +72,11 @@ public class Config {
         }
     }
 
-    // ---------- Загрузка ----------
-
     public static Config load(Path configPath) throws IOException {
         if (!Files.exists(configPath)) {
             throw new IOException("Config file not found: " + configPath);
         }
         String raw = new String(Files.readAllBytes(configPath), StandardCharsets.UTF_8);
-
-        // ============================================================
-        // ЕДИНСТВЕННОЕ ИЗМЕНЕНИЕ:
-        // прогоняем текст файла через JsonCommentsStripper, который
-        // вырезает комментарии (//, #, /* … */), сохраняя содержимое
-        // строковых литералов. Дальше — обычный org.json.
-        // ============================================================
         String cleanJson = JsonCommentsStripper.strip(raw);
         JSONObject root = new JSONObject(cleanJson);
 
@@ -96,10 +88,19 @@ public class Config {
             cfg.host = http.optString("host", cfg.host);
         }
 
+        // Читаем блок HTTPS (если он есть)
+        JSONObject https = root.optJSONObject("https");
+        if (https != null) {
+            cfg.httpsEnabled = https.optBoolean("enabled", false);
+            cfg.httpsCert = https.optString("cert", "");
+            cfg.httpsKey = https.optString("key", "");
+            cfg.httpsKeystore = https.optString("keystore", "");
+            cfg.httpsPassword = https.optString("password", "");
+        }
+
         String web = root.optString("web", "");
         if (web != null && !web.trim().isEmpty()) cfg.webPath = web.trim();
 
-        // ---- console (глобальные настройки) ----
         JSONObject console = root.optJSONObject("console");
         if (console != null) {
             cfg.consoleShell = console.optString("shell", "");
@@ -108,7 +109,6 @@ public class Config {
             cfg.consoleMaxOutputBytes = console.optLong("maxOutputBytes", 1024 * 1024);
         }
 
-        // ---- videochat (глобальные настройки) ----
         JSONObject vc = root.optJSONObject("videochat");
         if (vc != null) {
             cfg.videoChatEnabled = vc.optBoolean("enabled", false);
@@ -117,7 +117,6 @@ public class Config {
             if (!guid.isEmpty()) cfg.wsGuid = guid;
         }
 
-        // users
         JSONArray arrU = root.optJSONArray("users");
         if (arrU != null) {
             for (int i = 0; i < arrU.length(); i++) {
@@ -132,7 +131,6 @@ public class Config {
             }
         }
 
-        // shares
         boolean rootShareLogged = false;
         JSONArray arrS = root.optJSONArray("shares");
         if (arrS != null) {

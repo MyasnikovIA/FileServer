@@ -11,11 +11,15 @@
 //     chrome.windows.create({ type: 'popup' });
 //   • chrome.runtime.onMessage.addListener в popup-окне работает
 //     (popup — это обычная extension-страница, не service worker).
+//
+// ОБНОВЛЕНО: читаем флаг secure из URL и при необходимости
+// используем wss:// вместо ws:// (важно, когда FileServer работает по HTTPS).
 
 const params = new URLSearchParams(location.search);
 const room = params.get('room') || 'main';
 const host = params.get('host') || 'localhost';
 const source = params.get('source') || 'camera'; // 'camera' или 'screen'
+const isSecure = params.get('secure') === '1';   // <-- ДОБАВЛЕНО
 
 const statusEl  = document.getElementById('status');
 const viewersEl = document.getElementById('viewers');
@@ -79,7 +83,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
         }
 
-        const wsUrl = `ws://${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
+        // ВЫБОР ПРОТОКОЛА: wss для HTTPS, ws для HTTP
+        const wsProto = isSecure ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProto}//${host}:${WS_PORT}/ws/publish?room=${encodeURIComponent(room)}`;
         setStatus(`Подключение к ${wsUrl}...`);
 
         ws = new WebSocket(wsUrl);

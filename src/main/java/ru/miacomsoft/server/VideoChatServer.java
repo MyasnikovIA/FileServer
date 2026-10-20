@@ -2,6 +2,7 @@ package ru.miacomsoft.server;
 
 import org.json.JSONObject;
 
+import javax.net.ssl.SSLContext;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -18,19 +19,29 @@ public class VideoChatServer {
 
     private final int port;
     private final String wsGuid;
+    private final SSLContext sslContext; // Может быть null
     private ServerSocket server;
     private volatile boolean running = false;
 
     private final ConcurrentHashMap<String, Room> ROOMS = new ConcurrentHashMap<>();
     private static final int MAX_FRAME = 16 * 1024 * 1024;
 
-    public VideoChatServer(int port, String wsGuid) {
+    public VideoChatServer(int port, String wsGuid, SSLContext sslContext) {
         this.port = port;
         this.wsGuid = wsGuid;
+        this.sslContext = sslContext;
     }
 
     public void start() throws Exception {
-        server = new ServerSocket(port);
+        // Если передан SSLContext, используем защищенный сокет
+        if (sslContext != null) {
+            server = sslContext.getServerSocketFactory().createServerSocket(port);
+            System.out.println("[VideoChat] WSS mode enabled on port " + port);
+        } else {
+            server = new ServerSocket(port);
+            System.out.println("[VideoChat] WS (plain) mode enabled on port " + port);
+        }
+
         running = true;
 
         Thread t = new Thread(() -> {

@@ -3,6 +3,9 @@
 // Отличия от Chrome-версии: отсутствуют. Edge (Chromium 88+)
 // поддерживает промисы для chrome.storage.local.get/set,
 // chrome.tabs.query и chrome.runtime.sendMessage.
+//
+// ОБНОВЛЕНО: определяем secure для popup. Если активная вкладка открыта
+// по HTTPS — флаг передаётся, иначе используется ws://.
 
 const $ = (id) => document.getElementById(id);
 

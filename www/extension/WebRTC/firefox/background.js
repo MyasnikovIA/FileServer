@@ -14,14 +14,16 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
 
     if (msg.type === 'start') {
-        startCapture(msg.room, msg.host, msg.source)
+        // Запуск из popup (флаг secure по умолчанию false)
+        startCapture(msg.room, msg.host, msg.source, false)
             .then(r => sendResponse(r))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
 
     if (msg.type === 'page-start-broadcast') {
-        startCapture(msg.room || 'main', msg.host || 'localhost', msg.source)
+        // Запуск со страницы (принимаем флаг secure)
+        startCapture(msg.room || 'main', msg.host || 'localhost', msg.source, msg.secure)
             .then(r => sendResponse(r))
             .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
@@ -35,14 +37,15 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
 });
 
-async function startCapture(room, host, source) {
+async function startCapture(room, host, source, secure) {
     if (captureWindowId !== null) {
         try { await api.windows.remove(captureWindowId); } catch (e) { /* ignore */ }
         captureWindowId = null;
     }
 
+    // Передаем флаг secure в URL
     const url = api.runtime.getURL(
-        `capture.html?room=${encodeURIComponent(room)}&host=${encodeURIComponent(host)}&source=${encodeURIComponent(source || 'camera')}`
+        `capture.html?room=${encodeURIComponent(room)}&host=${encodeURIComponent(host)}&source=${encodeURIComponent(source || 'camera')}&secure=${secure ? '1' : '0'}`
     );
 
     const win = await api.windows.create({
