@@ -11,11 +11,7 @@
 FAR.getDefaultConn = function () {
     const proto = location.protocol === 'file:' ? 'http:' : location.protocol;
     const host  = location.hostname || '127.0.0.1';
-    return {
-        url:  proto + '//' + host + ':8080',
-        user: '',
-        pass: ''
-    };
+    return { url:  proto + '//' + host + ':8080', user: '', pass: '' };
 };
 
 
@@ -58,11 +54,7 @@ FAR._testReachability = async function (baseUrl) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 3000);
         await fetch(baseUrl + '/api/info?ping=' + Date.now(), {
-            method: 'GET',
-            mode: 'no-cors',
-            credentials: 'omit',
-            signal: controller.signal,
-            cache: 'no-store'
+            method: 'GET', mode: 'no-cors', credentials: 'omit', signal: controller.signal, cache: 'no-store'
         });
         clearTimeout(timer);
         return true;
@@ -116,29 +108,23 @@ FAR.ensureDb = function () {
  * Без этого fetch() падает:
  *   "URL scheme 'www.example.com' is not supported"
  */
+
 FAR.connectToDb = async function (cfg) {
-    if (typeof FAR.FsClient !== 'function') {
-        throw new Error('FsClient не загружен (js/04a-fs-client.js)');
-    }
+    if (typeof FAR.FsClient !== 'function') throw new Error('FsClient не загружен');
 
     const originalUrl = FAR.normalizeServerUrl(cfg && cfg.url);
     if (!originalUrl) throw new Error('Не указан адрес FileServer');
 
-    // Сохраняем исходный URL — не мутируем на прокси
     cfg.url = originalUrl;
 
     let actualUrl = originalUrl;
     let usedProxy = false;
 
-    // ---- Проверка необходимости прокси ----
     const currentOrigin = window.location.origin;
     let targetOrigin = '';
-    try {
-        targetOrigin = new URL(originalUrl).origin;
-    } catch (e) { /* invalid URL */ }
+    try { targetOrigin = new URL(originalUrl).origin; } catch (e) {}
 
     if (targetOrigin && targetOrigin !== currentOrigin) {
-        // Проверяем доступность. Если недоступен — идём через прокси текущего сервера.
         if (typeof FAR.updateLoadingSub === 'function') {
             FAR.updateLoadingSub('Проверка доступности ' + originalUrl + '…');
         }
@@ -147,14 +133,11 @@ FAR.connectToDb = async function (cfg) {
             actualUrl = FAR.buildProxyUrl(originalUrl);
             usedProxy = true;
             console.log('[connect] Прямое подключение недоступно, используем прокси:', actualUrl);
-            if (typeof FAR.setStatus === 'function') {
-                FAR.setStatus('🔀 Подключение через прокси…');
-            }
+            if (typeof FAR.setStatus === 'function') FAR.setStatus('🔀 Подключение через прокси…');
         }
     }
 
     cfg._proxy = usedProxy;
-
     let token = '';
 
     if (cfg.user) {
@@ -162,60 +145,37 @@ FAR.connectToDb = async function (cfg) {
         try {
             loginRes = await FAR.FsClient.login(actualUrl, cfg.user, cfg.pass || '');
         } catch (e) {
-            if (e.status === 401) {
-                const err = new Error('Неверный логин или пароль (401)');
-                err.status = 401;
-                throw err;
-            }
-            if (e.name === 'NetworkError') {
-                const err = new Error('Не удалось подключиться (сеть/CORS). Проверьте адрес.');
-                err.name = 'NetworkError';
-                throw err;
-            }
+            if (e.status === 401) { const err = new Error('Неверный логин или пароль (401)'); err.status = 401; throw err; }
+            if (e.name === 'NetworkError') { const err = new Error('Не удалось подключиться (сеть/CORS)'); err.name = 'NetworkError'; throw err; }
             throw e;
         }
         token = loginRes.token || '';
         if (!token) throw new Error('Сервер не выдал токен');
     }
 
-    const client = new FAR.FsClient(actualUrl, {
-        user:  cfg.user || '',
-        pass:  cfg.pass || '',
-        token: token
-    });
+    const client = new FAR.FsClient(actualUrl, { user: cfg.user || '', pass: cfg.pass || '', token: token });
     client._isProxy = usedProxy;
     client._originalUrl = originalUrl;
 
     const info = await client.info();
 
     FAR.consoleEnabled = !!info.console;
-
     FAR.videoChatEnabled = !!info.videoChatEnabled;
-    FAR.videoChatPort = (typeof info.videoChatPort === 'number' && info.videoChatPort > 0)
-        ? info.videoChatPort
-        : 8081;
+    FAR.videoChatPort = (typeof info.videoChatPort === 'number' && info.videoChatPort > 0) ? info.videoChatPort : 8081;
 
-    // Регистрируем как "свой" сервер — только для прямого подключения.
-    // Для прокси-URL не регистрируем (FsClient сам управляет токеном).
-    if (!usedProxy) {
-        FAR.registerServer(actualUrl);
-    }
+    if (!usedProxy) FAR.registerServer(actualUrl);
 
-    if (FAR.consoleEnabled && typeof FAR.WM !== 'undefined'
-        && typeof FAR.WM.registerConsoleApp === 'function') {
+    if (FAR.consoleEnabled && typeof FAR.WM !== 'undefined' && typeof FAR.WM.registerConsoleApp === 'function') {
         FAR.WM.registerConsoleApp();
-    } else if (typeof FAR.WM !== 'undefined'
-        && typeof FAR.WM.unregisterConsoleApp === 'function') {
+    } else if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.unregisterConsoleApp === 'function') {
         FAR.WM.unregisterConsoleApp();
     }
 
     await client.allDocs({ limit: 1 });
 
     return {
-        db:      client,
-        info:    info,
+        db: client, info: info,
         fullUrl: FAR.connLabel({ url: originalUrl, user: cfg.user || '' }),
-        token:   token,
-        proxy:   usedProxy
+        token: token, proxy: usedProxy
     };
 };

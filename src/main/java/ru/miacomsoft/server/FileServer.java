@@ -81,7 +81,7 @@ public class FileServer {
         server.createContext("/api",        new ApiHandler());
         server.createContext("/",           rootHandler);
         server.createContext("/api/console", new ConsoleHandler());
-        server.createContext("/api/proxy",   new HttpHandler() {
+        server.createContext("/api/proxy",   new com.sun.net.httpserver.HttpHandler() {
             @Override
             public void handle(com.sun.net.httpserver.HttpExchange ex) throws java.io.IOException {
                 ProxyHandler.handle(ex);

@@ -383,20 +383,12 @@ FAR.buildDirectFileUrl = function (item, side) {
     if (!effectiveUrl) return null;
 
     const isProxy = effectiveUrl !== originalUrl;
-
     const path = FAR.normPath(item.path);
     if (!path) return null;
 
-    const encoded = path
-        .split('/')
-        .filter(Boolean)
-        .map(encodeURIComponent)
-        .join('/');
-
+    const encoded = path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
     let url = effectiveUrl + '/' + encoded;
 
-    // Для прокси-подключений пробрасываем токен в URL, чтобы <img>, <video>,
-    // <a href> и прочие нативные запросы авторизовались.
     if (isProxy && ctx.db.token) {
         url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(ctx.db.token);
     }

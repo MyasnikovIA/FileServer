@@ -7,22 +7,6 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/**
- * ProxyHandler — прозрачный HTTP-прокси для подключения к другому FileServer.
- *
- * Использование: /api/proxy/{base64url(target)}/path/to/resource?query
- *
- * Пример:
- *   /api/proxy/aHR0cDovLzE5Mi4xNjguMS41MDo4MDgw/api/list?path=foo
- *
- * Server 1 (этот) проксирует на:
- *   http://192.168.1.50:8080/api/list?path=foo
- *
- * Authorization, Content-Type, тело запроса — передаются как есть.
- * Ответ — стримится обратно клиенту.
- *
- * Set-Cookie в ответе НЕ передаются (чтобы не затирать cookie основного сервера).
- */
 public class ProxyHandler {
 
     private static final int CONNECT_TIMEOUT = 10000;
@@ -42,6 +26,7 @@ public class ProxyHandler {
     public static void handle(HttpExchange ex) throws IOException {
         if (FileServer.handleOptions(ex)) return;
 
+        // Аутентификация на публичном сервере (по куке или Basic Auth)
         AuthService.Session session = FileServer.auth().authenticate(ex);
         if (session == null) {
             ex.getResponseHeaders().set("WWW-Authenticate", "Basic realm=\"FileServer\"");
@@ -74,7 +59,6 @@ public class ProxyHandler {
 
         String targetBase;
         try {
-            // Добавляем padding, если его нет (URL-safe base64 без '=')
             String padded = b64Target;
             int mod = padded.length() % 4;
             if (mod == 2) padded += "==";
@@ -103,7 +87,7 @@ public class ProxyHandler {
         System.out.println("[Proxy] " + method + " " + targetUrl);
 
         try {
-            forward(ex, targetUrl, method, b64Target);
+            forward(ex, targetUrl, method);
         } catch (Exception e) {
             System.err.println("[Proxy] ERROR " + method + " " + targetUrl + ": " + e.getMessage());
             try {
@@ -112,7 +96,7 @@ public class ProxyHandler {
         }
     }
 
-    private static void forward(HttpExchange ex, String targetUrl, String method, String b64Target) throws IOException {
+    private static void forward(HttpExchange ex, String targetUrl, String method) throws IOException {
         URL url = new URL(targetUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod(method);
@@ -121,7 +105,6 @@ public class ProxyHandler {
         conn.setInstanceFollowRedirects(false);
         conn.setDoInput(true);
 
-        // Копируем заголовки запроса
         for (Map.Entry<String, List<String>> entry : ex.getRequestHeaders().entrySet()) {
             String key = entry.getKey();
             if (key == null) continue;
@@ -132,7 +115,6 @@ public class ProxyHandler {
             }
         }
 
-        // Тело запроса
         boolean hasBody = "POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method);
         if (hasBody) {
             conn.setDoOutput(true);
@@ -170,7 +152,6 @@ public class ProxyHandler {
             return;
         }
 
-        // Копируем заголовки ответа
         String contentType = null;
         long responseLength = -1;
         for (Map.Entry<String, List<String>> entry : conn.getHeaderFields().entrySet()) {
@@ -185,15 +166,6 @@ public class ProxyHandler {
             }
             if (lower.equals("content-type")) {
                 contentType = entry.getValue().get(0);
-            }
-            if (lower.equals("location")) {
-                String loc = entry.getValue().get(0);
-                if (!loc.startsWith("http://") && !loc.startsWith("https://")) {
-                    String proxyBase = "/api/proxy/" + b64Target;
-                    String newLoc = loc.startsWith("/") ? proxyBase + loc : proxyBase + "/" + loc;
-                    try { ex.getResponseHeaders().add("Location", newLoc); } catch (Exception ignored) {}
-                    continue;
-                }
             }
             if (SKIP_RESPONSE_HEADERS.contains(lower)) continue;
 

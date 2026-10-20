@@ -127,17 +127,11 @@ FAR._createConsole = function (hostEl, opts) {
     let resizeObserver = null;
     let resizeTimer = null;
 
-    // Функция для безопасного изменения размера
     const doFit = () => {
         if (!term || S.destroyed) return;
-        try {
-            fitAddon.fit();
-        } catch (e) {
-            // Игнорируем ошибки, если элемент временно скрыт
-        }
+        try { fitAddon.fit(); } catch (e) {}
     };
 
-    // Обработчик изменения размера окна браузера
     const onWindowResize = () => {
         if (resizeTimer) clearTimeout(resizeTimer);
         resizeTimer = setTimeout(doFit, 100);
@@ -161,16 +155,12 @@ FAR._createConsole = function (hostEl, opts) {
             fontFamily: 'Consolas, "Courier New", monospace',
             fontSize: 13,
             theme: {
-                background: '#0b0b12',
-                foreground: '#cdd6f4',
-                cursor: '#a6e3a1',
-                selectionBackground: '#45475a'
+                background: '#0b0b12', foreground: '#cdd6f4', cursor: '#a6e3a1', selectionBackground: '#45475a'
             }
         });
 
         fitAddon = new FitAddon.FitAddon();
         term.loadAddon(fitAddon);
-
         term.open(elTermHost);
 
         requestAnimationFrame(() => {
@@ -182,8 +172,10 @@ FAR._createConsole = function (hostEl, opts) {
         });
 
         const ctx = FAR.side && FAR.side[FAR.activePanel];
-        const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
-        const token = FAR.authToken || FAR.readCookieToken();
+
+        // ИСПОЛЬЗУЕМ ПРОКСИ-URL И ЛОКАЛЬНЫЙ ТОКЕН
+        const baseUrl = (ctx && ctx.db && ctx.db.baseUrl) ? String(ctx.db.baseUrl).replace(/\/+$/, '') : location.origin;
+        const token = (ctx && ctx.db && ctx.db.token) ? ctx.db.token : (FAR.authToken || FAR.readCookieToken());
 
         term.onData(async (data) => {
             if (!S.connected) return;
@@ -192,13 +184,9 @@ FAR._createConsole = function (hostEl, opts) {
 
             try {
                 const res = await fetch(baseUrl + '/api/console/input', {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({ data: data })
+                    method: 'POST', headers: headers, body: JSON.stringify({ data: data })
                 });
-                if (!res.ok) {
-                    console.warn('[console] input failed:', res.status);
-                }
+                if (!res.ok) console.warn('[console] input failed:', res.status);
             } catch (e) {
                 console.error('[console] input fetch error:', e);
             }
@@ -211,22 +199,17 @@ FAR._createConsole = function (hostEl, opts) {
 
             try {
                 await fetch(baseUrl + '/api/console/resize', {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({ cols: size.cols, rows: size.rows })
+                    method: 'POST', headers: headers, body: JSON.stringify({ cols: size.cols, rows: size.rows })
                 });
             } catch (e) {}
         });
 
         const focusTerminal = (e) => {
-            if (term && !e.target.closest('button')) {
-                setTimeout(() => term.focus(), 10);
-            }
+            if (term && !e.target.closest('button')) setTimeout(() => term.focus(), 10);
         };
         hostEl.addEventListener('mousedown', focusTerminal);
         hostEl.addEventListener('touchstart', focusTerminal, { passive: true });
 
-        // 1. Отслеживаем изменение размера самого контейнера
         if (window.ResizeObserver) {
             resizeObserver = new ResizeObserver(() => {
                 if (resizeTimer) clearTimeout(resizeTimer);
@@ -235,10 +218,7 @@ FAR._createConsole = function (hostEl, opts) {
             resizeObserver.observe(elTermHost);
         }
 
-        // 2. Отслеживаем изменение размера окна браузера / WM-окна
         window.addEventListener('resize', onWindowResize);
-
-        // 3. Принудительный ресайз после полного открытия модалки
         setTimeout(doFit, 300);
         setTimeout(doFit, 800);
     }
@@ -247,8 +227,10 @@ FAR._createConsole = function (hostEl, opts) {
         if (S.destroyed) return;
 
         const ctx = FAR.side && FAR.side[FAR.activePanel];
-        const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
-        const token = FAR.authToken || FAR.readCookieToken();
+
+        // ИСПОЛЬЗУЕМ ПРОКСИ-URL И ЛОКАЛЬНЫЙ ТОКЕН
+        const baseUrl = (ctx && ctx.db && ctx.db.baseUrl) ? String(ctx.db.baseUrl).replace(/\/+$/, '') : location.origin;
+        const token = (ctx && ctx.db && ctx.db.token) ? ctx.db.token : (FAR.authToken || FAR.readCookieToken());
 
         if (!token) {
             setStatus('Нет токена', 'error');
@@ -298,10 +280,7 @@ FAR._createConsole = function (hostEl, opts) {
     }
 
     function disconnect() {
-        if (S.es) {
-            try { S.es.close(); } catch (e) {}
-            S.es = null;
-        }
+        if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
         S.connected = false;
         setStatus('Отключено', 'error');
         if (term) term.writeln('\x1b[31m✗ Соединение закрыто пользователем.\x1b[0m');
@@ -312,16 +291,17 @@ FAR._createConsole = function (hostEl, opts) {
     elKill.addEventListener('click', async function () {
         if (!S.connected) return;
         const ctx = FAR.side && FAR.side[FAR.activePanel];
-        const baseUrl = (ctx && ctx.conn && ctx.conn.url) ? String(ctx.conn.url).replace(/\/+$/, '') : location.origin;
-        const token = FAR.authToken || FAR.readCookieToken();
+
+        // ИСПОЛЬЗУЕМ ПРОКСИ-URL И ЛОКАЛЬНЫЙ ТОКЕН
+        const baseUrl = (ctx && ctx.db && ctx.db.baseUrl) ? String(ctx.db.baseUrl).replace(/\/+$/, '') : location.origin;
+        const token = (ctx && ctx.db && ctx.db.token) ? ctx.db.token : (FAR.authToken || FAR.readCookieToken());
+
         const headers = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = 'Bearer ' + token;
 
         try {
             await fetch(baseUrl + '/api/console/input', {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify({ data: '\x03' }) // Ctrl+C
+                method: 'POST', headers: headers, body: JSON.stringify({ data: '\x03' })
             });
         } catch (e) {}
     });
