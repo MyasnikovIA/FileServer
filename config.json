@@ -40,7 +40,7 @@
   "users": [
     {
       "name": "myasnikovia",
-      "password": "XXXXXXXXXXXX",
+      "password": "XXXXXXXXXXX",
       "quota": -1,
       "console": true
     }
@@ -54,7 +54,7 @@
       "access": ["read", "write", "delete"],
       "anonymous": false,
       "users": ["myasnikovia", "olga"],
-      "quota": 200
+      "quota": -1
     },
     {
       "name": "Public",
