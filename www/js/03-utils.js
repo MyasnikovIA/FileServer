@@ -192,15 +192,27 @@ FAR.restoreUiState = function() {
     }
 
     const restorePromises = [];
+
     if (typeof st.leftPath === 'string' && st.leftPath) {
         FAR.side.left.path = st.leftPath;
         FAR.side.left._loadedDir = null;
-        restorePromises.push(FAR.ensureDirLoaded('left', st.leftPath, { silent: true }));
+        restorePromises.push(
+            FAR.ensureDirLoaded('left', st.leftPath, { silent: true }).catch(function(e) {
+                // Игнорируем ошибку 403/404 при автовосстановлении
+                console.warn('[restoreUiState] Не удалось восстановить левую панель:', e.message);
+            })
+        );
     }
+
     if (typeof st.rightPath === 'string' && st.rightPath) {
         FAR.side.right.path = st.rightPath;
         FAR.side.right._loadedDir = null;
-        restorePromises.push(FAR.ensureDirLoaded('right', st.rightPath, { silent: true }));
+        restorePromises.push(
+            FAR.ensureDirLoaded('right', st.rightPath, { silent: true }).catch(function(e) {
+                // Игнорируем ошибку 403/404 при автовосстановлении
+                console.warn('[restoreUiState] Не удалось восстановить правую панель:', e.message);
+            })
+        );
     }
 
     return Promise.all(restorePromises).then(function() {

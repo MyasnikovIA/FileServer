@@ -43,7 +43,9 @@ FAR.loadFilesForSide = async function (side, opts) {
         return items;
     } catch (e) {
         s.loading = false;
-        console.error('loadFilesForSide(' + side + '):', e);
+        if (!opts.silent) {
+            console.error('loadFilesForSide(' + side + '):', e);
+        }
         throw e;
     }
 };
