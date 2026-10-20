@@ -284,6 +284,53 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
         sourceSelect.disabled = started;
     }
 
+    // Вспомогательная функция для архивации папки расширения
+    async function downloadExtensionZip(browserPath, browserName) {
+        if (typeof JSZip === 'undefined') {
+            FAR.toast('Библиотека JSZip не загружена', 'error');
+            return;
+        }
+
+        // Список файлов, из которых состоит расширение (согласно вашей структуре)
+        const files = [
+            'manifest.json',
+            'background.js',
+            'bridge.js',
+            'capture.html',
+            'capture.js',
+            'popup.html',
+            'popup.js'
+        ];
+
+        const zip = new JSZip();
+        const folder = zip.folder("VideoChat_Broadcaster_" + browserName);
+
+        setStatus('⏳', 'Подготовка архива для ' + browserName + '...', '');
+
+        try {
+            for (const file of files) {
+                const url = browserPath + '/' + file;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Не найден файл: ' + file);
+                const content = await res.blob();
+                folder.file(file, content);
+            }
+
+            const blob = await zip.generateAsync({ type: 'blob' });
+
+            // Используем существующую функцию сохранения файла
+            FAR.saveBlobAs(blob, "VideoChat_Broadcaster_" + browserName + ".zip");
+            FAR.toast('Архив с плагином успешно скачан', 'success');
+
+            // Возвращаем статус обратно
+            render();
+        } catch (e) {
+            console.error('[Broadcaster] ZIP error:', e);
+            setStatus('❌', 'Ошибка создания архива: ' + FAR.escapeHtml(e.message) + '<br><small>Попробуйте скачать вручную из папки ' + browserPath + '</small>', 'err');
+            FAR.toast('Ошибка создания архива: ' + e.message, 'error');
+        }
+    }
+
     function render() {
         const detected = FAR.Broadcaster.state.detected;
         const started = FAR.Broadcaster.state.started;
@@ -300,12 +347,46 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
         } else if (detected) {
             setStatus('✅', 'Плагин <b>Video Chat Broadcaster</b> обнаружен.', 'ok');
         } else {
+            // Определяем браузер пользователя
+            const ua = navigator.userAgent;
+            let browserName = "Browser";
+            let downloadPath = "extension/WebRTC";
+
+            if (ua.indexOf("Edg") > -1) {
+                browserName = "Edge";
+                downloadPath = "extension/WebRTC/microsoft_edge";
+            } else if (ua.indexOf("Firefox") > -1) {
+                browserName = "Firefox";
+                downloadPath = "extension/WebRTC/firefox";
+            } else if (ua.indexOf("Chrome") > -1) {
+                browserName = "Chrome";
+                downloadPath = "extension/WebRTC/chrome";
+            }
+
+            const downloadBtnHtml =
+                '<br><br>' +
+                '<button id="btn-dl-plugin" ' +
+                'style="padding:6px 14px;background:#89b4fa;color:#1e1e2e;' +
+                'border:none;border-radius:4px;font-weight:bold;font-size:13px;' +
+                'cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.2);">' +
+                '📥 Скачать плагин (.zip) для ' + browserName +
+                '</button>';
+
             setStatus(
                 '❌',
                 'Плагин <b>Video Chat Broadcaster</b> не обнаружен.' +
-                '<br><small>Установите расширение и перезагрузите страницу.</small>',
+                '<br><small>Установите расширение и перезагрузите страницу.</small>' +
+                downloadBtnHtml,
                 'err'
             );
+
+            // Навешиваем обработчик на только что созданную кнопку
+            const dlBtn = statusText.querySelector('#btn-dl-plugin');
+            if (dlBtn) {
+                dlBtn.onclick = function() {
+                    downloadExtensionZip(downloadPath, browserName);
+                };
+            }
         }
         updateButtons();
     }
