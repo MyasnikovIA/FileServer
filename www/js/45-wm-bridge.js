@@ -1140,11 +1140,17 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
             ? item.path.substring(0, item.path.lastIndexOf('/'))
             : '';
         let hotspots = [];
-        try {
-            const jsonData = await FAR._findPanoramaJson(item, side);
-            hotspots = FAR._jsonToPannellumHotspots(jsonData, basePath, url);
-        } catch (e) {
-            console.warn('[WM pano] hotspots:', e);
+
+        // Если переданы хотспоты напрямую из редактора — используем их
+        if (props._hotspotsOverride) {
+            hotspots = FAR._jsonToPannellumHotspots({ hotSpots: props._hotspotsOverride }, basePath, url);
+        } else {
+            try {
+                const jsonData = await FAR._findPanoramaJson(item, side);
+                hotspots = FAR._jsonToPannellumHotspots(jsonData, basePath, url);
+            } catch (e) {
+                console.warn('[WM pano] hotspots:', e);
+            }
         }
 
         if (typeof window.pannellum === 'undefined') {
@@ -1179,6 +1185,9 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
             loadingEl.style.display = 'none';
             setTimeout(function () {
                 FAR.WM._attachWmHotspotHandlers(win);
+                if (typeof FAR.WM._attachPanoEditorDblClick === 'function') {
+                    FAR.WM._attachPanoEditorDblClick(win, uniqueId, item, side);
+                }
             }, 50);
         });
         viewer.on('error', function (msg) {
@@ -1632,10 +1641,25 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
 FAR.WM._installViewerNavButtons = function (win, item, side) {
     const titlebar = win.el.querySelector('.wm-titlebar');
     if (!titlebar) return;
-    if (titlebar.querySelector('.wm-nav-prev')) return;
 
     const actions = titlebar.querySelector('.wm-title-actions');
     if (!actions) return;
+
+    // Кнопка "✏️ Редактор" — только для панорам, добавляем один раз
+    if (win.appId === 'panorama' && !actions.querySelector('.wm-nav-edit')) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'wm-title-btn wm-nav-edit';
+        editBtn.textContent = '✏️';
+        editBtn.title = 'Редактор точек перехода';
+        editBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            FAR.WM.openPanoEditor({ item: item, side: side, coords: null });
+        });
+        actions.insertBefore(editBtn, actions.firstChild);
+    }
+
+    // Кнопки ◀ ▶ — навигация
+    if (titlebar.querySelector('.wm-nav-prev')) return;
 
     const ctx = FAR.side[side];
     const files = (ctx && ctx.files) || [];
