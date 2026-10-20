@@ -108,12 +108,30 @@ FAR.Broadcaster.start = async function (room, source) {
     room = String(room || 'main').trim() || 'main';
     source = source || 'camera'; // 'camera' или 'screen'
 
+    // Проверяем, является ли контекст безопасным (HTTPS или localhost)
+    const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost';
+
+    if (isSecure) {
+        try {
+            FAR.Broadcaster.startNative(room, source);
+            FAR.Broadcaster.state.started = true;
+            FAR.Broadcaster.state.room = room;
+            FAR.Broadcaster.state.source = source;
+            try { localStorage.setItem('filebd_vc_broadcast_room', room); } catch (e) {}
+            return { ok: true, native: true };
+        } catch (e) {
+            throw new Error('Не удалось запустить нативную трансляцию: ' + e.message);
+        }
+    }
+
+    // Если контекст небезопасный (HTTP), используем плагин
     if (!FAR.Broadcaster.state.detected) {
         const ok = await FAR.Broadcaster.detect();
         if (!ok) {
             throw new Error(
                 'Плагин «Video Chat Broadcaster (WebRTC)» не обнаружен. ' +
-                'Установите расширение в Chrome/Edge и перезагрузите страницу.'
+                'Установите расширение в Chrome/Edge и перезагрузите страницу. ' +
+                'Либо используйте HTTPS для нативной трансляции.'
             );
         }
     }
@@ -140,14 +158,24 @@ FAR.Broadcaster.start = async function (room, source) {
 };
 
 FAR.Broadcaster.stop = async function () {
-    try {
-        const resp = await FAR.Broadcaster._send('stop-broadcast', {}, 3000);
-        FAR.Broadcaster.state.started = false;
-        return resp;
-    } catch (e) {
-        FAR.Broadcaster.state.started = false;
-        throw e;
+    // Если открыт нативный popup - закрываем
+    if (FAR.Broadcaster._nativePopup && !FAR.Broadcaster._nativePopup.closed) {
+        try { FAR.Broadcaster._nativePopup.postMessage({ type: 'stop-broadcast' }, '*'); } catch (e) {}
+        setTimeout(() => { try { FAR.Broadcaster._nativePopup.close(); } catch (e) {} }, 300);
+        FAR.Broadcaster._nativePopup = null;
     }
+    FAR.Broadcaster.state.started = false;
+
+    // Если плагин - отправляем stop
+    if (FAR.Broadcaster.state.detected) {
+        try {
+            const resp = await FAR.Broadcaster._send('stop-broadcast', {}, 3000);
+            return resp;
+        } catch (e) {
+            throw e;
+        }
+    }
+    return { ok: true };
 };
 
 FAR.Broadcaster.getDefaultRoom = function () {
@@ -219,15 +247,14 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
     if (!hostEl) throw new Error('_createBroadcasterUI: hostEl required');
 
     const wsPort = FAR.videoChatPort || 8081;
+    const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost';
 
     hostEl.innerHTML =
         '<div class="vc-bc-block">' +
-
         '<div class="vc-bc-status-row" data-role="status-row">' +
         '<span class="vc-bc-status-icon" data-role="status-icon">⏳</span>' +
-        '<div class="vc-bc-status-text" data-role="status-text">Проверка плагина…</div>' +
+        '<div class="vc-bc-status-text" data-role="status-text">Проверка статуса…</div>' +
         '</div>' +
-
         '<div class="vc-bc-field">' +
         '<label for="vcBcSource">Источник видео</label>' +
         '<select id="vcBcSource" class="vc-bc-input">' +
@@ -235,24 +262,20 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
         '<option value="screen">🖥️ Экран монитора</option>' +
         '</select>' +
         '</div>' +
-
         '<div class="vc-bc-field">' +
         '<label for="vcBcRoom">Комната (Room)</label>' +
         '<input type="text" id="vcBcRoom" class="vc-bc-input" autocomplete="off" spellcheck="false">' +
         '</div>' +
-
         '<div class="vc-bc-actions">' +
         '<button class="vc-bc-btn vc-bc-start" data-role="start">▶ Начать трансляцию</button>' +
         '<button class="vc-bc-btn vc-bc-stop"  data-role="stop" disabled>■ Остановить</button>' +
         '<button class="vc-bc-btn vc-bc-watch" data-role="watch" disabled>📺 Смотреть</button>' +
         '</div>' +
-
         '<div class="vc-bc-hint">' +
         '💡 Трансляция идёт через P2P WebRTC: медиа передаётся напрямую ' +
         'зрителям, сервер используется только для сигналинга. ' +
         'Порт <code>' + FAR.escapeHtml(String(wsPort)) + '</code> должен быть открыт.' +
         '</div>' +
-
         '</div>';
 
     const statusRow  = hostEl.querySelector('[data-role="status-row"]');
@@ -276,59 +299,11 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
     function updateButtons() {
         const detected = FAR.Broadcaster.state.detected;
         const started = FAR.Broadcaster.state.started;
-
-        startBtn.disabled = !detected || started;
+        startBtn.disabled = (!detected && !isSecure) || started;
         stopBtn.disabled  = !started;
         watchBtn.disabled = !started;
         roomInput.disabled = started;
         sourceSelect.disabled = started;
-    }
-
-    // Вспомогательная функция для архивации папки расширения
-    async function downloadExtensionZip(browserPath, browserName) {
-        if (typeof JSZip === 'undefined') {
-            FAR.toast('Библиотека JSZip не загружена', 'error');
-            return;
-        }
-
-        // Список файлов, из которых состоит расширение (согласно вашей структуре)
-        const files = [
-            'manifest.json',
-            'background.js',
-            'bridge.js',
-            'capture.html',
-            'capture.js',
-            'popup.html',
-            'popup.js'
-        ];
-
-        const zip = new JSZip();
-        const folder = zip.folder("VideoChat_Broadcaster_" + browserName);
-
-        setStatus('⏳', 'Подготовка архива для ' + browserName + '...', '');
-
-        try {
-            for (const file of files) {
-                const url = browserPath + '/' + file;
-                const res = await fetch(url);
-                if (!res.ok) throw new Error('Не найден файл: ' + file);
-                const content = await res.blob();
-                folder.file(file, content);
-            }
-
-            const blob = await zip.generateAsync({ type: 'blob' });
-
-            // Используем существующую функцию сохранения файла
-            FAR.saveBlobAs(blob, "VideoChat_Broadcaster_" + browserName + ".zip");
-            FAR.toast('Архив с плагином успешно скачан', 'success');
-
-            // Возвращаем статус обратно
-            render();
-        } catch (e) {
-            console.error('[Broadcaster] ZIP error:', e);
-            setStatus('❌', 'Ошибка создания архива: ' + FAR.escapeHtml(e.message) + '<br><small>Попробуйте скачать вручную из папки ' + browserPath + '</small>', 'err');
-            FAR.toast('Ошибка создания архива: ' + e.message, 'error');
-        }
     }
 
     function render() {
@@ -344,54 +319,36 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
                 '<br><small>Окно с захватом открылось отдельно. Разрешите доступ.</small>',
                 'ok'
             );
+        } else if (isSecure) {
+            setStatus('✅', 'Режим HTTPS: трансляция доступна без плагина.', 'ok');
         } else if (detected) {
             setStatus('✅', 'Плагин <b>Video Chat Broadcaster</b> обнаружен.', 'ok');
         } else {
-            // Определяем браузер пользователя
+            // HTTP - нужен плагин, показываем кнопку скачивания
             const ua = navigator.userAgent;
             let browserName = "Browser";
             let downloadPath = "extension/WebRTC";
-
-            if (ua.indexOf("Edg") > -1) {
-                browserName = "Edge";
-                downloadPath = "extension/WebRTC/microsoft_edge";
-            } else if (ua.indexOf("Firefox") > -1) {
-                browserName = "Firefox";
-                downloadPath = "extension/WebRTC/firefox";
-            } else if (ua.indexOf("Chrome") > -1) {
-                browserName = "Chrome";
-                downloadPath = "extension/WebRTC/chrome";
-            }
+            if (ua.indexOf("Edg") > -1) { browserName = "Edge"; downloadPath = "extension/WebRTC/microsoft_edge"; }
+            else if (ua.indexOf("Firefox") > -1) { browserName = "Firefox"; downloadPath = "extension/WebRTC/firefox"; }
+            else if (ua.indexOf("Chrome") > -1) { browserName = "Chrome"; downloadPath = "extension/WebRTC/chrome"; }
 
             const downloadBtnHtml =
                 '<br><br>' +
-                '<button id="btn-dl-plugin" ' +
-                'style="padding:6px 14px;background:#89b4fa;color:#1e1e2e;' +
-                'border:none;border-radius:4px;font-weight:bold;font-size:13px;' +
-                'cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.2);">' +
-                '📥 Скачать плагин (.zip) для ' + browserName +
-                '</button>';
+                '<button id="btn-dl-plugin" style="padding:6px 14px;background:#89b4fa;color:#1e1e2e;border:none;border-radius:4px;font-weight:bold;font-size:13px;cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.2);">' +
+                '📥 Скачать плагин (.zip) для ' + browserName + '</button>';
 
-            setStatus(
-                '❌',
-                'Плагин <b>Video Chat Broadcaster</b> не обнаружен.' +
-                '<br><small>Установите расширение и перезагрузите страницу.</small>' +
-                downloadBtnHtml,
-                'err'
-            );
+            setStatus('❌', 'Плагин <b>Video Chat Broadcaster</b> не обнаружен.<br><small>Установите расширение или перейдите на HTTPS.</small>' + downloadBtnHtml, 'err');
 
-            // Навешиваем обработчик на только что созданную кнопку
             const dlBtn = statusText.querySelector('#btn-dl-plugin');
             if (dlBtn) {
-                dlBtn.onclick = function() {
-                    downloadExtensionZip(downloadPath, browserName);
-                };
+                dlBtn.onclick = function() { FAR.Broadcaster.downloadExtensionZip(downloadPath, browserName); };
             }
         }
         updateButtons();
     }
 
     async function detectWithRetries() {
+        if (isSecure) { render(); return; } // Если HTTPS, плагин не проверяем
         if (FAR.Broadcaster.state.detected) { render(); return; }
         for (let i = 0; i < 4; i++) {
             const ok = await FAR.Broadcaster.detect(1000);
@@ -456,6 +413,184 @@ FAR._createBroadcasterUI = function (hostEl, opts) {
     };
 };
 
+FAR.Broadcaster.startNative = function (room, source) {
+    room = String(room || 'main').trim() || 'main';
+    source = source || 'camera';
+
+    const wsPort = FAR.videoChatPort || 8081;
+    const host = location.hostname;
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = wsProto + '//' + host + ':' + wsPort + '/ws/publish?room=' + encodeURIComponent(room);
+
+    const popup = window.open('', 'broadcaster_native', 'width=640,height=480,menubar=no,toolbar=no,location=no,status=no');
+    if (!popup) {
+        throw new Error('Браузер заблокировал всплывающее окно. Разрешите popup для этого сайта.');
+    }
+
+    FAR.Broadcaster._nativePopup = popup;
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Broadcasting (Native)</title>
+            <style>
+                html, body { height: 100%; margin: 0; box-sizing: border-box; }
+                body { font-family: system-ui, sans-serif; background: #111; color: #eee; display: flex; flex-direction: column; padding: 8px; }
+                video { flex: 1; min-height: 0; width: 100%; background: #000; border-radius: 6px; display: block; object-fit: contain; }
+                #status { flex-shrink: 0; margin-top: 6px; font-size: 12px; color: #bbb; word-break: break-all; min-height: 16px; }
+                #viewers { flex-shrink: 0; margin-top: 4px; font-size: 11px; color: #89b4fa; }
+                button { flex-shrink: 0; margin-top: 8px; width: 100%; padding: 7px; cursor: pointer; border: none; border-radius: 4px; background: #c42b1c; color: white; font-weight: bold; }
+                button:hover { background: #e03e2d; }
+            </style>
+        </head>
+        <body>
+        <video id="preview" autoplay muted playsinline></video>
+        <div id="status">starting…</div>
+        <div id="viewers"></div>
+        <button id="stop">Stop broadcasting</button>
+        <script>
+        (function() {
+            const wsUrl = ${JSON.stringify(wsUrl)};
+            const source = ${JSON.stringify(source)};
+
+            const statusEl = document.getElementById('status');
+            const viewersEl = document.getElementById('viewers');
+            const preview = document.getElementById('preview');
+            const stopBtn = document.getElementById('stop');
+
+            const setStatus = (s) => { console.log('[capture]', s); statusEl.textContent = s; };
+            const setViewers = (n) => { viewersEl.textContent = n ? 'Зрителей: ' + n : ''; };
+
+            const peers = new Map();
+            let ws = null;
+            let stream = null;
+
+            document.addEventListener('DOMContentLoaded', async () => {
+                try {
+                    if (source === 'screen') {
+                        setStatus('Запрос доступа к экрану...');
+                        stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'always' }, audio: true });
+                    } else {
+                        setStatus('Запрос доступа к камере...');
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+                            audio: { echoCancellation: true, noiseSuppression: true }
+                        });
+                    }
+
+                    preview.srcObject = stream;
+
+                    const videoTrack = stream.getVideoTracks()[0];
+                    if (videoTrack) {
+                        videoTrack.onended = () => {
+                            setStatus('Трансляция остановлена пользователем');
+                            stop();
+                        };
+                    }
+
+                    setStatus('Подключение к ' + wsUrl + '...');
+                    ws = new WebSocket(wsUrl);
+
+                    ws.onopen = () => { setStatus('Подключено. Ожидание зрителей...'); };
+
+                    ws.onmessage = (event) => {
+                        if (typeof event.data !== 'string') return;
+                        let msg;
+                        try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+                        if (msg.viewerJoined) { handleViewerJoined(msg.viewerJoined); return; }
+                        if (msg.viewerLeft) { closePeer(msg.viewerLeft); return; }
+
+                        if (msg.viewerId && msg.sdp && msg.sdp.type === 'answer') {
+                            const pc = peers.get(msg.viewerId);
+                            if (pc) pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch(err => console.warn('[capture] answer error:', err));
+                            return;
+                        }
+
+                        if (msg.viewerId && msg.candidate) {
+                            const pc = peers.get(msg.viewerId);
+                            if (pc) pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(err => console.warn('[capture] candidate error:', err));
+                            return;
+                        }
+                    };
+
+                    ws.onclose = () => { setStatus('Соединение закрыто'); cleanup(); };
+                    ws.onerror = (err) => { setStatus('Ошибка WebSocket. Проверьте IP и порт.'); console.error(err); };
+
+                } catch (err) {
+                    setStatus('Ошибка захвата: ' + err.message);
+                    console.error('[capture]', err);
+                }
+            });
+
+            async function handleViewerJoined(viewerId) {
+                closePeer(viewerId);
+                const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+                pc.onicecandidate = (event) => {
+                    if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ target: viewerId, candidate: event.candidate.toJSON() }));
+                    }
+                };
+
+                pc.onconnectionstatechange = () => {
+                    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') closePeer(viewerId);
+                };
+
+                peers.set(viewerId, pc);
+                setViewers(peers.size);
+                setStatus('Зритель подключился: ' + viewerId.substring(0, 8) + '…');
+
+                try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    ws.send(JSON.stringify({ target: viewerId, sdp: pc.localDescription.toJSON() }));
+                } catch (e) {
+                    console.error('[capture] offer error:', e);
+                    closePeer(viewerId);
+                }
+            }
+
+            function closePeer(viewerId) {
+                const pc = peers.get(viewerId);
+                if (pc) {
+                    try { pc.close(); } catch (e) {}
+                    peers.delete(viewerId);
+                    setViewers(peers.size);
+                }
+            }
+
+            function cleanup() {
+                for (const viewerId of Array.from(peers.keys())) closePeer(viewerId);
+                if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch (e) {} }
+                ws = null;
+                if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+            }
+
+            function stop() {
+                cleanup();
+                setTimeout(() => window.close(), 200);
+            }
+
+            stopBtn.onclick = stop;
+            window.addEventListener('beforeunload', cleanup);
+            window.addEventListener('message', (e) => {
+                if (e.data && e.data.type === 'stop-broadcast') stop();
+            });
+        })();
+        <\/script>
+        </body>
+        </html>
+    `;
+
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
+};
+
 // ============================================================
 // WM-приложение 'broadcaster'
 // ============================================================
@@ -511,3 +646,4 @@ document.addEventListener('keydown', function (e) {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
     FAR.closeBroadcaster();
 }, true);
+
