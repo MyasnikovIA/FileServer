@@ -19,6 +19,11 @@
   #  "key": "/etc/letsencrypt/live/smwrap.ru/privkey.pem"
   #},
 
+  #"https": {
+  #  "enabled": true,
+  #  "keystore": "/home/myasnikovia/JavaProject/FileServer_git/certs/keystore.p12",
+  #  "password": "changeit"
+  #},
 
   # для Windows
   "console": {

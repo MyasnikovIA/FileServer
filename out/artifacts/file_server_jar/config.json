@@ -13,7 +13,11 @@
   #  "key": "/opt/prosody/config/certs/smwrap.ru.key"
   #},
 
-
+  #"https": {
+  #  "enabled": true,
+  #  "keystore": "/home/myasnikovia/JavaProject/FileServer_git/certs/keystore.p12",
+  #  "password": "changeit"
+  #},
 
   "console": {
     "shell": "",
