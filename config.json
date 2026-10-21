@@ -6,6 +6,20 @@
 
   "web": "www",
 
+  "https": {
+    "enabled": true,
+    "cert": "/opt/prosody/config/certs/smwrap.ru.crt",
+    "key": "/opt/prosody/config/certs/smwrap.ru.key"
+  },
+
+  #
+  #"https": {
+  #  "enabled": true,
+  #  "cert": "/etc/letsencrypt/live/smwrap.ru/fullchain.pem",
+  #  "key": "/etc/letsencrypt/live/smwrap.ru/privkey.pem"
+  #},
+
+
   # для Windows
   "console": {
     "shell": "cmd.exe",
