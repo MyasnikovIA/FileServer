@@ -10,8 +10,16 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ConsoleHandler implements HttpHandler {
+
+    // ============================================================
+    // Буферы событий для fallback-поллинга, по одному на сессию.
+    // Ключ — username + "_" + sessionId.
+    // ============================================================
+
+    private static final Map<String, ConsoleEventBuffer> BUFFERS = new ConcurrentHashMap<>();
 
     @Override
     public void handle(HttpExchange ex) throws IOException {
@@ -54,6 +62,12 @@ public class ConsoleHandler implements HttpHandler {
         return sessionId;
     }
 
+    // ============================================================
+    // /api/console/events
+    //   без ?poll — SSE-стрим (как раньше)
+    //   с ?poll=1&since=N — JSON с накопленными событиями
+    // ============================================================
+
     private void handleEvents(HttpExchange ex) throws IOException {
         if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
             FileServer.sendError(ex, 405, "Method not allowed");
@@ -66,10 +80,18 @@ public class ConsoleHandler implements HttpHandler {
         String sessionId = getSessionId(ex, true);
         String key = s.username + "_" + sessionId;
 
+        Map<String, String> q = FileServer.parseQuery(ex.getRequestURI().getQuery());
+        boolean pollMode = "1".equals(q.get("poll"));
+
+        if (pollMode) {
+            handleEventsPoll(ex, key, q);
+            return;
+        }
+
+        // ---- Обычный SSE-режим ----
         FileServer.handleCors(ex);
         ex.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         ex.getResponseHeaders().set("Cache-Control", "no-cache, no-store, must-revalidate");
-        ex.getResponseHeaders().set("Connection", "keep-alive");
         ex.getResponseHeaders().set("X-Accel-Buffering", "no");
         ex.sendResponseHeaders(200, 0);
 
@@ -79,17 +101,29 @@ public class ConsoleHandler implements HttpHandler {
         FileServer.console().startShell(key);
         session.attachSse(conn);
 
+        // Гарантируем существование буфера — на случай, если клиент
+        // решит перейти на polling.
+        ConsoleEventBuffer buf = BUFFERS.computeIfAbsent(key, k -> new ConsoleEventBuffer());
+        session.setEventBuffer(buf);
+
         try {
             JSONObject ready = new JSONObject();
             ready.put("user", s.username);
-            ready.put("sessionId", sessionId); // <--- Отправляем ID клиенту
+            ready.put("sessionId", sessionId);
             ready.put("cwd", System.getProperty("user.dir"));
             conn.send("ready", ready.toString());
 
-            while (!session.isClosed()) {
-                try { Thread.sleep(15000); }
-                catch (InterruptedException ie) { break; }
+            // Пинг сразу, чтобы HttpsServer не откладывал flush
+            try {
+                conn.send("ping", "{\"t\":" + System.currentTimeMillis() + "}");
+            } catch (IOException ignored) {}
 
+            while (!session.isClosed()) {
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException ie) {
+                    break;
+                }
                 try {
                     conn.send("ping", "{\"t\":" + System.currentTimeMillis() + "}");
                 } catch (IOException io) {
@@ -101,6 +135,29 @@ public class ConsoleHandler implements HttpHandler {
             conn.close();
         }
     }
+
+    private void handleEventsPoll(HttpExchange ex, String key, Map<String, String> q)
+            throws IOException {
+        long since = 0;
+        try {
+            since = Long.parseLong(q.getOrDefault("since", "0"));
+        } catch (Exception ignored) {}
+
+        ConsoleEventBuffer buf = BUFFERS.computeIfAbsent(key, k -> new ConsoleEventBuffer());
+
+        // Гарантируем, что shell запущен — иначе событий не будет.
+        FileServer.console().startShell(key);
+
+        JSONObject resp = new JSONObject();
+        resp.put("events", buf.since(since));
+        resp.put("nextSeq", buf.nextSeq());
+
+        FileServer.sendJson(ex, 200, resp.toString());
+    }
+
+    // ============================================================
+    // /api/console/input
+    // ============================================================
 
     private void handleInput(HttpExchange ex) throws IOException {
         if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
@@ -134,12 +191,20 @@ public class ConsoleHandler implements HttpHandler {
             data = body;
         }
 
+        // ВАЖНО: создаём сессию и запускаем shell, даже если SSE не
+        // открылся. Иначе input уходил бы в никуда.
+        FileServer.console().getOrCreate(key);
+        FileServer.console().startShell(key);
         FileServer.console().writeInput(key, data);
 
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
         FileServer.sendJson(ex, 200, ok.toString());
     }
+
+    // ============================================================
+    // /api/console/resize
+    // ============================================================
 
     private void handleResize(HttpExchange ex) throws IOException {
         if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
@@ -171,6 +236,9 @@ public class ConsoleHandler implements HttpHandler {
                 rows = o.optInt("rows", 24);
             } catch (Exception e) { /* ignore */ }
         }
+
+        FileServer.console().getOrCreate(key);
+        FileServer.console().startShell(key);
         FileServer.console().resize(key, cols, rows);
 
         JSONObject ok = new JSONObject();

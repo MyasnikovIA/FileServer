@@ -34,6 +34,7 @@
     <link rel="stylesheet" href="css/video-viewer.css">
     <link rel="stylesheet" href="css/videochat-viewer.css">
     <link rel="stylesheet" href="css/videochat-broadcaster.css">
+    <link rel="stylesheet" href="css/gpu-monitor.css">
     <link rel="stylesheet" href="css/wm.css">
 </head>
 <body>
@@ -49,6 +50,7 @@
     <button onclick="FAR.refreshFiles()" class="btn-warning" id="btnRefresh" disabled>🔄 Обновить</button>
     <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру" disabled>🔍 Debug</button>
     <button onclick="FAR.openGamepadSetup()" id="btnGamepad" title="Настроить джойстик">🎮 Джойстик</button>
+    <button onclick="FAR.openGpuMonitor()" id="btnGpu" title="Мониторинг видеокарт (nvidia-smi)">🎮 GPU</button>
     <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)" style="display:none;">🖥️ Консоль</button>
     <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺 Трансляция</button>
     <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">🎥 Вещать</button>
@@ -175,5 +177,6 @@
 <script src="js/53-videochat-broadcaster.js"></script>
 <script src="js/54-wm-panorama-editor.js"></script>
 <script src="js/55-wm-text-editor.js"></script>
+<script src="js/56-gpu-monitor.js"></script>
 </body>
 </html>

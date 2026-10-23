@@ -20,6 +20,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ConsoleSession {
+
     private Process process;
     private OutputStream stdin;
     private InputStream stdout;
@@ -27,13 +28,25 @@ public class ConsoleSession {
     private volatile boolean closed = false;
 
     private String ttyFilePath = null;
+
     private final List<SseConnection> sseList = new CopyOnWriteArrayList<>();
     private final AtomicLong lastActivity = new AtomicLong(System.currentTimeMillis());
+
+    /**
+     * Буфер для polling-клиентов. Может быть null (тогда только SSE).
+     * Устанавливается из ConsoleHandler при первом SSE или poll-запросе.
+     */
+    private volatile ConsoleEventBuffer eventBuffer = null;
 
     public ConsoleSession() {
     }
 
     public ConsoleSession(String shell) {
+    }
+
+    /** Позволяет ConsoleHandler-у привязать буфер для polling. */
+    public void setEventBuffer(ConsoleEventBuffer buf) {
+        this.eventBuffer = buf;
     }
 
     public void startShell(String shell, String cwd) throws IOException {
@@ -49,7 +62,8 @@ public class ConsoleSession {
             useNativePty = true;
             System.out.println("[Console] Используется нативный PTY.");
         } catch (Throwable t) {
-            System.err.println("[Console] Нативный PTY не поддерживается. Используем встроенную утилиту 'script'.");
+            System.err.println("[Console] Нативный PTY не поддерживается: " + t.getMessage());
+            System.err.println("[Console] Используем встроенную утилиту 'script'.");
 
             try {
                 String tempDir = System.getProperty("java.io.tmpdir");
@@ -63,7 +77,7 @@ public class ConsoleSession {
                 process = pb.start();
                 useNativePty = false;
             } catch (Exception e) {
-                System.err.println("[Console] Утилита 'script' не найдена. Запуск без TTY.");
+                System.err.println("[Console] Утилита 'script' не найдена. Запуск без TTY: " + e.getMessage());
                 ProcessBuilder pb = new ProcessBuilder(shell);
                 pb.directory(new File(cwd));
                 pb.environment().putAll(env);
@@ -87,16 +101,25 @@ public class ConsoleSession {
             try {
                 while (!closed && (read = stdout.read(buffer)) != -1) {
                     String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
-                    String eventData = "{\"text\":" + JSONObject.quote(text) + "}";
 
+                    // 1. Пишем всем SSE-клиентам
+                    String eventData = "{\"text\":" + JSONObject.quote(text) + "}";
                     for (SseConnection sse : sseList) {
                         try {
                             sse.send("output", eventData);
-                        } catch (Exception e) {}
+                        } catch (Exception e) {
+                            System.err.println("[Console] SSE send error: " + e.getMessage());
+                        }
+                    }
+
+                    // 2. Дублируем в polling-буфер
+                    ConsoleEventBuffer buf = eventBuffer;
+                    if (buf != null) {
+                        buf.add("output", text);
                     }
                 }
             } catch (IOException e) {
-                // Поток закрыт
+                System.err.println("[Console] Reader thread: " + e.getMessage());
             } finally {
                 closed = true;
                 if (process != null) process.destroy();
@@ -120,7 +143,9 @@ public class ConsoleSession {
                 if (Files.exists(p)) {
                     String tty = new String(Files.readAllBytes(p), StandardCharsets.UTF_8).trim();
                     if (!tty.isEmpty() && tty.startsWith("/dev/")) {
-                        new ProcessBuilder("stty", "-F", tty, "rows", String.valueOf(rows), "cols", String.valueOf(cols)).start();
+                        new ProcessBuilder("stty", "-F", tty,
+                                "rows", String.valueOf(rows),
+                                "cols", String.valueOf(cols)).start();
                     }
                 }
             } catch (Exception e) {
@@ -167,7 +192,7 @@ public class ConsoleSession {
                 Thread.sleep(100);
             } catch (InterruptedException ignored) {}
             if (process.isAlive()) {
-                process.destroyForcibly(); // Убиваем принудительно, если не умер
+                process.destroyForcibly();
             }
         }
         sseList.clear();

@@ -47,8 +47,11 @@ FAR.setupKeyboard = function() {
                 FAR.closeGamepadSetup();
                 return;
             }
-            // Закрываем обычный просмотрщик только если нет активных
-            // операций прогресса (чтобы не закрывать пользователю фоновые задачи).
+            const gpuEsc = document.getElementById('gpuMonitorModal');           // ← НОВОЕ
+            if (gpuEsc && !gpuEsc.classList.contains('hidden')) {
+                FAR.closeGpuMonitor();
+                return;
+            }
             if (!FAR.hasActiveProgress()) FAR.closeViewer();
             return;
         }
@@ -101,6 +104,9 @@ FAR.setupKeyboard = function() {
 
         const gpSetup2 = document.getElementById('gamepadSetupModal');
         if (gpSetup2 && !gpSetup2.classList.contains('hidden')) return;
+
+        const gpuModal2 = document.getElementById('gpuMonitorModal');        // ← НОВОЕ
+        if (gpuModal2 && !gpuModal2.classList.contains('hidden')) return;
 
         // === Навигация курсором ===
         const side  = FAR.activePanel;

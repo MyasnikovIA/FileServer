@@ -96,6 +96,39 @@ FAR.closeConsoleOutside = function (e) {
 };
 
 // ============================================================
+// Единая точка вычисления baseUrl/token для консоли
+// с защитой от mixed content
+// ============================================================
+
+FAR._consoleResolveBaseUrl = function () {
+    const ctx = FAR.side && FAR.side[FAR.activePanel];
+    let base = '';
+    if (ctx && ctx.db && ctx.db.baseUrl) {
+        base = String(ctx.db.baseUrl).replace(/\/+$/, '');
+    } else {
+        base = location.origin;
+    }
+
+    // Если страница HTTPS, а baseUrl HTTP — это mixed content.
+    // EventSource будет заблокирован браузером МОЛЧА.
+    // Заменяем на текущий origin (он точно HTTPS).
+    if (location.protocol === 'https:' && base.startsWith('http://')) {
+        console.warn('[console] Mixed content: baseUrl=' + base +
+            ' → заменяю на ' + location.origin);
+        base = location.origin;
+    }
+
+    return base;
+};
+
+FAR._consoleResolveToken = function () {
+    const ctx = FAR.side && FAR.side[FAR.activePanel];
+    if (ctx && ctx.db && ctx.db.token) return ctx.db.token;
+    if (FAR.authToken) return FAR.authToken;
+    try { return FAR.readCookieToken(); } catch (e) { return ''; }
+};
+
+// ============================================================
 // ЯДРО: FAR._createConsole(hostEl, opts)
 // ============================================================
 
@@ -110,6 +143,7 @@ FAR._createConsole = function (hostEl, opts) {
         '</div>' +
         '<button class="console-btn" data-role="clear" title="Очистить экран">🧹 Очистить</button>' +
         '<button class="console-btn" data-role="kill" title="Прервать (Ctrl+C)">⛔ Прервать</button>' +
+        '<button class="console-btn" data-role="reconnect" title="Переподключиться">🔁 Переподключить</button>' +
         '<button class="console-btn" data-role="disconnect" title="Разорвать соединение">🔌 Отключиться</button>' +
         '</div>' +
         '<div class="console-body" data-role="terminal" style="padding: 4px; background: #0b0b12; overflow: hidden;"></div>';
@@ -118,18 +152,28 @@ FAR._createConsole = function (hostEl, opts) {
     const elStatusTxt = hostEl.querySelector('[data-role="statusText"]');
     const elClear = hostEl.querySelector('[data-role="clear"]');
     const elKill = hostEl.querySelector('[data-role="kill"]');
+    const elReconnect = hostEl.querySelector('[data-role="reconnect"]');
     const elDisc = hostEl.querySelector('[data-role="disconnect"]');
     const elTermHost = hostEl.querySelector('[data-role="terminal"]');
 
-    const S = { es: null, connected: false, destroyed: false };
+    const S = {
+        es: null,
+        connected: false,
+        destroyed: false,
+        pollTimer: null,
+        lastEventSeq: 0
+    };
 
-    // Генерируем уникальный ID сессии для этой конкретной консоли
-    const sessionId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const sessionId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
     let term = null;
     let fitAddon = null;
     let resizeObserver = null;
     let resizeTimer = null;
+    let sseConnectTimer = null;
+    let sseOpenedOk = false;
 
     const doFit = () => {
         if (!term || S.destroyed) return;
@@ -175,39 +219,16 @@ FAR._createConsole = function (hostEl, opts) {
             });
         });
 
-        const ctx = FAR.side && FAR.side[FAR.activePanel];
-
-        // ИСПОЛЬЗУЕМ ПРОКСИ-URL И ЛОКАЛЬНЫЙ ТОКЕН
-        const baseUrl = (ctx && ctx.db && ctx.db.baseUrl) ? String(ctx.db.baseUrl).replace(/\/+$/, '') : location.origin;
-        const token = (ctx && ctx.db && ctx.db.token) ? ctx.db.token : (FAR.authToken || FAR.readCookieToken());
-
         term.onData(async (data) => {
             if (!S.connected) return;
-            const headers = { 'Content-Type': 'application/json' };
-            if (token) headers['Authorization'] = 'Bearer ' + token;
-
-            try {
-                // Передаем sessionId в URL
-                const res = await fetch(baseUrl + '/api/console/input?sessionId=' + encodeURIComponent(sessionId), {
-                    method: 'POST', headers: headers, body: JSON.stringify({ data: data })
-                });
-                if (!res.ok) console.warn('[console] input failed:', res.status);
-            } catch (e) {
-                console.error('[console] input fetch error:', e);
-            }
+            await postJson('/api/console/input?sessionId=' + encodeURIComponent(sessionId),
+                { data: data });
         });
 
         term.onResize(async (size) => {
             if (size.cols === 0 || size.rows === 0) return;
-            const headers = { 'Content-Type': 'application/json' };
-            if (token) headers['Authorization'] = 'Bearer ' + token;
-
-            try {
-                // Передаем sessionId в URL
-                await fetch(baseUrl + '/api/console/resize?sessionId=' + encodeURIComponent(sessionId), {
-                    method: 'POST', headers: headers, body: JSON.stringify({ cols: size.cols, rows: size.rows })
-                });
-            } catch (e) {}
+            await postJson('/api/console/resize?sessionId=' + encodeURIComponent(sessionId),
+                { cols: size.cols, rows: size.rows });
         });
 
         const focusTerminal = (e) => {
@@ -229,14 +250,38 @@ FAR._createConsole = function (hostEl, opts) {
         setTimeout(doFit, 800);
     }
 
+    async function postJson(pathSuffix, body) {
+        const baseUrl = FAR._consoleResolveBaseUrl();
+        const token = FAR._consoleResolveToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+        try {
+            const res = await fetch(baseUrl + pathSuffix, {
+                method: 'POST',
+                headers: headers,
+                credentials: 'include',
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) {
+                console.warn('[console] POST ' + pathSuffix + ' → ' + res.status);
+            }
+            return res.ok;
+        } catch (e) {
+            console.error('[console] POST error:', e);
+            return false;
+        }
+    }
+
+    // ============================================================
+    // SSE + fallback-поллинг
+    // ============================================================
+
     function connect() {
         if (S.destroyed) return;
 
-        const ctx = FAR.side && FAR.side[FAR.activePanel];
-
-        // ИСПОЛЬЗУЕМ ПРОКСИ-URL И ЛОКАЛЬНЫЙ ТОКЕН
-        const baseUrl = (ctx && ctx.db && ctx.db.baseUrl) ? String(ctx.db.baseUrl).replace(/\/+$/, '') : location.origin;
-        const token = (ctx && ctx.db && ctx.db.token) ? ctx.db.token : (FAR.authToken || FAR.readCookieToken());
+        const baseUrl = FAR._consoleResolveBaseUrl();
+        const token = FAR._consoleResolveToken();
 
         if (!token) {
             setStatus('Нет токена', 'error');
@@ -244,16 +289,46 @@ FAR._createConsole = function (hostEl, opts) {
             return;
         }
 
-        // Передаем sessionId в URL
-        const url = baseUrl + '/api/console/events?token=' + encodeURIComponent(token) + '&sessionId=' + encodeURIComponent(sessionId);
-        setStatus('Подключение…', 'loading');
+        const url = baseUrl + '/api/console/events?token=' +
+            encodeURIComponent(token) + '&sessionId=' + encodeURIComponent(sessionId);
 
-        const es = new EventSource(url);
+        setStatus('Подключение…', 'loading');
+        sseOpenedOk = false;
+
+        let es;
+        try {
+            es = new EventSource(url);
+        } catch (e) {
+            setStatus('Не удалось создать EventSource: ' + e.message, 'error');
+            if (term) term.writeln('\x1b[31m✗ ' + e.message + '\x1b[0m');
+            startPollingFallback();
+            return;
+        }
+
         S.es = es;
 
-        es.addEventListener('ready', function () {
+        // Таймаут: если за 5 секунд не пришёл `ready` — значит SSE
+        // молча не открылся (mixed content / TLS). Переходим на polling.
+        sseConnectTimer = setTimeout(function () {
+            if (sseOpenedOk) return;
+            if (S.destroyed) return;
+            console.warn('[console] SSE не открылся за 5с, переключаюсь на polling');
+            try { es.close(); } catch (err) {}
+            S.es = null;
+            if (term) {
+                term.writeln('\x1b[33m⚠ SSE не открылся — использую polling (медленнее).\x1b[0m');
+            }
+            startPollingFallback();
+        }, 5000);
+
+        es.addEventListener('ready', function (e) {
+            sseOpenedOk = true;
+            if (sseConnectTimer) {
+                clearTimeout(sseConnectTimer);
+                sseConnectTimer = null;
+            }
             S.connected = true;
-            setStatus('Подключено', 'online');
+            setStatus('Подключено (SSE)', 'online');
             setTimeout(doFit, 100);
         });
 
@@ -286,8 +361,71 @@ FAR._createConsole = function (hostEl, opts) {
         };
     }
 
+    function startPollingFallback() {
+        if (S.pollTimer || S.destroyed) return;
+
+        setStatus('Подключение (polling)…', 'loading');
+
+        let pollAfterSeq = 0;
+
+        const tick = async function () {
+            if (S.destroyed) return;
+
+            const baseUrl = FAR._consoleResolveBaseUrl();
+            const token = FAR._consoleResolveToken();
+            if (!token) {
+                setStatus('Нет токена', 'error');
+                return;
+            }
+
+            const url = baseUrl + '/api/console/events?token=' +
+                encodeURIComponent(token) +
+                '&sessionId=' + encodeURIComponent(sessionId) +
+                '&poll=1&since=' + pollAfterSeq;
+
+            try {
+                const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
+                if (!res.ok) {
+                    setStatus('Polling HTTP ' + res.status, 'error');
+                    return;
+                }
+                const data = await res.json();
+                if (data && Array.isArray(data.events)) {
+                    if (!S.connected) {
+                        S.connected = true;
+                        setStatus('Подключено (polling)', 'online');
+                        setTimeout(doFit, 100);
+                    }
+                    for (const ev of data.events) {
+                        if (ev.seq > pollAfterSeq) pollAfterSeq = ev.seq;
+                        if (ev.type === 'output' && ev.text && term) {
+                            term.write(ev.text);
+                        }
+                    }
+                }
+                if (typeof data.nextSeq === 'number') {
+                    pollAfterSeq = Math.max(pollAfterSeq, data.nextSeq);
+                }
+            } catch (e) {
+                setStatus('Polling error: ' + e.message, 'error');
+            }
+        };
+
+        tick();
+        S.pollTimer = setInterval(tick, 700);
+    }
+
+    function stopPolling() {
+        if (S.pollTimer) {
+            clearInterval(S.pollTimer);
+            S.pollTimer = null;
+        }
+    }
+
     function disconnect() {
+        if (sseConnectTimer) { clearTimeout(sseConnectTimer); sseConnectTimer = null; }
         if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
+        stopPolling();
         S.connected = false;
         setStatus('Отключено', 'error');
         if (term) term.writeln('\x1b[31m✗ Соединение закрыто пользователем.\x1b[0m');
@@ -297,21 +435,13 @@ FAR._createConsole = function (hostEl, opts) {
 
     elKill.addEventListener('click', async function () {
         if (!S.connected) return;
-        const ctx = FAR.side && FAR.side[FAR.activePanel];
+        await postJson('/api/console/input?sessionId=' + encodeURIComponent(sessionId),
+            { data: '\x03' });
+    });
 
-        // ИСПОЛЬЗУЕМ ПРОКСИ-URL И ЛОКАЛЬНЫЙ ТОКЕН
-        const baseUrl = (ctx && ctx.db && ctx.db.baseUrl) ? String(ctx.db.baseUrl).replace(/\/+$/, '') : location.origin;
-        const token = (ctx && ctx.db && ctx.db.token) ? ctx.db.token : (FAR.authToken || FAR.readCookieToken());
-
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-
-        try {
-            // Передаем sessionId в URL
-            await fetch(baseUrl + '/api/console/input?sessionId=' + encodeURIComponent(sessionId), {
-                method: 'POST', headers: headers, body: JSON.stringify({ data: '\x03' })
-            });
-        } catch (e) {}
+    elReconnect.addEventListener('click', function () {
+        disconnect();
+        setTimeout(connect, 100);
     });
 
     elDisc.addEventListener('click', disconnect);
@@ -323,9 +453,11 @@ FAR._createConsole = function (hostEl, opts) {
         destroy: function () {
             S.destroyed = true;
             if (resizeTimer) clearTimeout(resizeTimer);
+            if (sseConnectTimer) clearTimeout(sseConnectTimer);
             window.removeEventListener('resize', onWindowResize);
             if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
             if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
+            stopPolling();
             if (term) { try { term.dispose(); } catch (e) {} term = null; }
         }
     };

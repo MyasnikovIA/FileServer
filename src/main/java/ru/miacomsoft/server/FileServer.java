@@ -85,9 +85,6 @@ public class FileServer {
         InetSocketAddress addr = new InetSocketAddress(config.host, config.port);
         SSLContext sslContext = null;
 
-        // ============================================================
-        // ЛОГИКА ВЫБОРА HTTP ИЛИ HTTPS
-        // ============================================================
         if (config.httpsEnabled && (!config.httpsKeystore.isEmpty() || !config.httpsCert.isEmpty())) {
             sslContext = createSSLContext();
             HttpsServer httpsServer = HttpsServer.create(addr, 0);
@@ -102,20 +99,16 @@ public class FileServer {
         staticHandler = new StaticHandler(webRoot);
         rootHandler   = new RootHandler(staticHandler);
 
-        server.createContext("/api/events", new SseHandler());
-        server.createContext("/api",        new ApiHandler());
-        server.createContext("/",           rootHandler);
+        server.createContext("/api/events",  new SseHandler());
+        server.createContext("/api",         new ApiHandler());
+        server.createContext("/",            rootHandler);
         server.createContext("/api/console", new ConsoleHandler());
-
-        // Контекст для прокси
+        server.createContext("/api/gpu",     new GpuHandler());   // ← НОВОЕ
         server.createContext("/api/proxy",   ex -> ProxyHandler.handle(ex));
 
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
 
-        // ============================================================
-        // ЗАПУСК VIDEOCHAT (с переданным SSLContext или null)
-        // ============================================================
         if (config.videoChatEnabled) {
             videoChatServer = new VideoChatServer(config.videoChatPort, config.wsGuid, sslContext);
             try {
@@ -142,19 +135,14 @@ public class FileServer {
         }));
     }
 
-    /**
-     * Создает SSLContext из PEM-файлов (сертификата и ключа).
-     */
     private static SSLContext createSSLContext() throws Exception {
         KeyStore keyStore = KeyStore.getInstance("PKCS12");
 
         if (!config.httpsKeystore.isEmpty()) {
-            // Новый способ: загружаем готовый бинарный .p12
             try (InputStream is = Files.newInputStream(Paths.get(config.httpsKeystore))) {
                 keyStore.load(is, config.httpsPassword.toCharArray());
             }
         } else {
-            // Старый способ (для обратной совместимости с PEM)
             String certPem = new String(Files.readAllBytes(Paths.get(config.httpsCert)), StandardCharsets.UTF_8);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             Collection<? extends Certificate> certs = cf.generateCertificates(new ByteArrayInputStream(certPem.getBytes(StandardCharsets.UTF_8)));

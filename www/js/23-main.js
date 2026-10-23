@@ -36,6 +36,7 @@ FAR.injectModals = function() {
         'modals/pdf-viewer.html',
         'modals/browser.html',
         'modals/gamepad-setup.html',
+        'modals/gpu-monitor.html',              // ← НОВОЕ
         'modals/progress.html',
         'modals/loading.html',
         'modals/debug.html',
@@ -91,16 +92,10 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     FAR._installPannellumDbWrapper();
 
-    // ============================================================
-    // Восстанавливаем токен из cookie.
-    // ============================================================
     if (typeof FAR.restoreAuthTokenFromCookie === 'function') {
         FAR.restoreAuthTokenFromCookie();
     }
 
-    // ============================================================
-    // Автоподключение
-    // ============================================================
     const savedGlobal = FAR.loadConnFromLS();
     const savedLeft   = (typeof FAR.loadSideConnFromLS === 'function')
         ? FAR.loadSideConnFromLS('left')  : null;
@@ -122,7 +117,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             FAR.setStatus(`✅ Подключено: ${res.fullUrl}`);
             FAR.toast('Подключение восстановлено', 'success');
 
-            // Ленивая загрузка: грузим только корень обеих панелей.
             await FAR.loadFilesForSide('left',  { path: '/', silent: true });
             await FAR.loadFilesForSide('right', { path: '/', silent: true });
 
@@ -135,23 +129,6 @@ document.addEventListener('DOMContentLoaded', async function() {
                 FAR.updateConnIndicators();
             }
 
-            // ============================================================
-            // Восстанавливаем последний режим работы.
-            //
-            // ВАЖНО: НЕ вызываем здесь FAR.FS.enter().
-            // requestFullscreen работает только в ответ на user gesture,
-            // а setTimeout — НЕ user gesture. Браузер блокирует вызов
-            // и пишет в консоль:
-            //   "Failed to execute 'requestFullscreen' ... only be
-            //    initiated by a user gesture".
-            //
-            // Восстановление fullscreen уже реализовано в
-            // 47-fullscreen.js → FAR.FS._installAutoRestore():
-            // там навешивается обработчик на первый клик/клавишу,
-            // и при наличии желания (filebd_fullscreen=1) браузер
-            // корректно войдёт в полноэкранный режим по этому
-            // жесту.
-            // ============================================================
             if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.getSavedMode === 'function') {
                 const savedMode = FAR.WM.getSavedMode();
                 if (savedMode === 'wm' && !FAR.WM.state.active) {

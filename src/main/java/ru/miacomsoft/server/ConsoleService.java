@@ -23,7 +23,6 @@ public class ConsoleService {
         this.timeoutSec = timeoutSec;
         this.maxOutputBytes = maxOutputBytes;
 
-        // Запускаем очистку зомби-сессий каждую минуту
         cleaner.scheduleAtFixedRate(this::cleanupDeadSessions, 1, 1, TimeUnit.MINUTES);
     }
 
@@ -34,7 +33,6 @@ public class ConsoleService {
             if (s.isClosed()) {
                 return true;
             }
-            // Если нет SSE-клиентов и прошло больше 5 минут - убиваем процесс
             if (s.getSseCount() == 0 && (now - s.getLastActivity() > 5 * 60 * 1000)) {
                 s.close();
                 return true;

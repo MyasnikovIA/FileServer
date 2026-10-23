@@ -365,8 +365,9 @@ FAR._gamepadHandlePad = function(pad) {
 
 FAR._isAnyModalOpen = function() {
     const ids = ['connModal', 'viewerModal', 'panoramaEditorModal',
-                 'dbPickerModal', 'progressOverlay', 'emulatorViewerModal',
-                 'nesViewerModal', 'jsdosViewerModal', 'pdfViewerModal'];
+        'dbPickerModal', 'progressOverlay', 'emulatorViewerModal',
+        'nesViewerModal', 'jsdosViewerModal', 'pdfViewerModal',
+        'gpuMonitorModal'];
     for (let i = 0; i < ids.length; i++) {
         const el = document.getElementById(ids[i]);
         if (el && !el.classList.contains('hidden')) return true;

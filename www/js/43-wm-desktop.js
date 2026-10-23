@@ -4,16 +4,29 @@
 
 FAR.WM.LS_ICONS_KEY = 'filebd_wm_desktop_icons';
 
-// Какие приложения выводим иконками на рабочем столе по умолчанию
+// Всегда отображаемые приложения
 FAR.WM.DESKTOP_DEFAULT = [
-    { id: 'explorer',  x: 20,  y: 20  },
-    { id: 'viewer',    x: 20,  y: 130 },
-    { id: 'panorama',  x: 20,  y: 240 },
-    { id: 'pdf',       x: 20,  y: 350 },
-    { id: 'mp3',       x: 20,  y: 460 },
-    { id: 'video',     x: 130, y: 20  },
-    { id: 'connect',   x: 130, y: 130 },
-    { id: 'debug',     x: 130, y: 240 }
+    { id: 'explorer',   x: 20,  y: 20  },
+    { id: 'viewer',     x: 20,  y: 130 },
+    { id: 'panorama',   x: 20,  y: 240 },
+    { id: 'pdf',        x: 20,  y: 350 },
+    { id: 'mp3',        x: 20,  y: 460 },
+    { id: 'video',      x: 130, y: 20  },
+    { id: 'connect',    x: 130, y: 130 },
+    { id: 'debug',      x: 130, y: 240 },
+    { id: 'gpu',        x: 130, y: 350 },
+    { id: 'texteditor', x: 240, y: 20  },
+    { id: 'browser',    x: 240, y: 130 }
+];
+
+// Условные приложения — появляются, ТОЛЬКО если
+// соответствующее приложение зарегистрировано (Console — когда
+// info.console=true на сервере, VideoChat — когда videoChatEnabled
+// и т.д.).
+FAR.WM.DESKTOP_CONDITIONAL = [
+    { id: 'console',     x: 240, y: 240 },
+    { id: 'videochat',   x: 240, y: 350 },
+    { id: 'broadcaster', x: 350, y: 20  }
 ];
 
 FAR.WM._loadDesktopIcons = function () {
@@ -34,31 +47,71 @@ FAR.WM._saveDesktopIcons = function (list) {
     } catch (e) { /* ignore */ }
 };
 
+/**
+ * Гарантирует, что условные приложения, которые сейчас
+ * зарегистрированы, присутствуют в layout.
+ * @returns {boolean} true, если layout был изменён.
+ */
+FAR.WM._ensureConditionalAppOnDesktop = function (layout) {
+    if (!Array.isArray(layout)) return false;
+    const existingIds = new Set(
+        layout.map(function (e) { return e && e.id; }).filter(Boolean)
+    );
+    let changed = false;
+
+    FAR.WM.DESKTOP_CONDITIONAL.forEach(function (def) {
+        if (existingIds.has(def.id)) return;
+        if (!FAR.WM.getApp || !FAR.WM.getApp(def.id)) return;
+        layout.push({ id: def.id, x: def.x, y: def.y });
+        existingIds.add(def.id);
+        changed = true;
+    });
+
+    return changed;
+};
+
 FAR.WM._renderDesktopIcons = function () {
     const container = document.getElementById('wmDesktopIcons');
     if (!container) return;
 
-    // Иконки, которые НЕ должны появляться на рабочем столе,
-    // даже если они сохранены в localStorage от старых версий.
-    // 'dbpick' — диалог выбора файла, открывается только
-    // программно из других приложений.
     const HIDDEN_ON_DESKTOP = { 'dbpick': true };
 
     let layout = FAR.WM._loadDesktopIcons();
+    let changed = false;
+
     if (!layout) {
+        // Первый запуск — только дефолтный набор.
         layout = FAR.WM.DESKTOP_DEFAULT.slice();
-        FAR.WM._saveDesktopIcons(layout);
+        changed = true;
     } else {
-        // Фильтруем сохранённый layout: убираем скрытые иконки.
-        // Если что-то убрали — сохраняем почищенный вариант,
-        // чтобы при следующей загрузке не делать этого снова.
+        // 1) Убираем скрытые и некорректные записи
         const filtered = layout.filter(function (entry) {
             return entry && entry.id && !HIDDEN_ON_DESKTOP[entry.id];
         });
-        if (filtered.length !== layout.length) {
-            layout = filtered;
-            FAR.WM._saveDesktopIcons(layout);
-        }
+        if (filtered.length !== layout.length) changed = true;
+        layout = filtered;
+
+        // 2) Добавляем недостающие приложения из DESKTOP_DEFAULT
+        const existingIds = new Set(layout.map(function (e) { return e.id; }));
+        FAR.WM.DESKTOP_DEFAULT.forEach(function (def) {
+            if (HIDDEN_ON_DESKTOP[def.id]) return;
+            if (existingIds.has(def.id)) return;
+            layout.push({ id: def.id, x: def.x, y: def.y });
+            existingIds.add(def.id);
+            changed = true;
+        });
+    }
+
+    // 3) ВАЖНО: условные приложения (console, videochat, broadcaster)
+    //    добавляем в ОБОИХ ветках — и для свежего layout, и для
+    //    сохранённого. Именно этот блок раньше не вызывался для
+    //    свежего layout, из-за чего Console пропадала после сброса.
+    if (FAR.WM._ensureConditionalAppOnDesktop(layout)) {
+        changed = true;
+    }
+
+    if (changed) {
+        FAR.WM._saveDesktopIcons(layout);
     }
 
     container.innerHTML = '';
@@ -66,8 +119,6 @@ FAR.WM._renderDesktopIcons = function () {
     layout.forEach(function (entry, idx) {
         const app = FAR.WM.getApp ? FAR.WM.getApp(entry.id) : null;
         if (!app) return;
-        // Ещё одна страховка: даже если каким-то чудом
-        // скрытый id попал в layout — не рисуем.
         if (HIDDEN_ON_DESKTOP[entry.id]) return;
 
         const el = document.createElement('div');
@@ -80,12 +131,10 @@ FAR.WM._renderDesktopIcons = function () {
             '<span class="wm-di-emoji">' + FAR.escapeHtml(app.icon || '📦') + '</span>' +
             '<span class="wm-di-label">' + FAR.escapeHtml(app.title) + '</span>';
 
-        // Двойной клик — открыть
         el.addEventListener('dblclick', function () {
             FAR.WM.openApp(entry.id);
         });
 
-        // Одиночный клик — выделить
         el.addEventListener('mousedown', function (e) {
             e.stopPropagation();
             document.querySelectorAll('.wm-desktop-icon.selected').forEach(function (x) {
@@ -94,13 +143,11 @@ FAR.WM._renderDesktopIcons = function () {
             el.classList.add('selected');
         });
 
-        // Перетаскивание иконки
         el.addEventListener('mousedown', function (e) {
             if (e.button !== 0) return;
             FAR.WM._startIconDrag(e, el, idx);
         });
 
-        // ПКМ по иконке
         el.addEventListener('contextmenu', function (e) {
             e.preventDefault();
             e.stopPropagation();
@@ -109,6 +156,22 @@ FAR.WM._renderDesktopIcons = function () {
 
         container.appendChild(el);
     });
+};
+
+/**
+ * Планировщик отложенной перерисовки рабочего стола.
+ * Нужен, чтобы десяток registerApp() при старте не запускал
+ * десять полных перерисовок.
+ */
+FAR.WM._scheduleDesktopRender = function () {
+    if (FAR.WM._desktopRenderTimer) return;
+    FAR.WM._desktopRenderTimer = setTimeout(function () {
+        FAR.WM._desktopRenderTimer = null;
+        if (FAR.WM.state && FAR.WM.state.active) {
+            try { FAR.WM._renderDesktopIcons(); }
+            catch (e) { console.warn('[WM] renderDesktopIcons:', e); }
+        }
+    }, 50);
 };
 
 // ============================================================
@@ -180,20 +243,14 @@ FAR.WM._showDesktopContextMenu = function (x, y) {
         FAR.WM.openApp('gamepad');
     });
 
-    // ============================================================
-    // Обои рабочего стола (модуль 48-wm-wallpaper.js)
-    // ============================================================
     if (typeof FAR.WMWallpaper !== 'undefined') {
         FAR.WM._addCtxSep(menu);
-
         FAR.WM._addCtxItem(menu, '🖼 Обои из URL…', function () {
             FAR.WMWallpaper.promptUrl();
         });
         FAR.WM._addCtxItem(menu, '🖼 Обои из БД…', function () {
             FAR.WMWallpaper.pickFromDb();
         });
-
-        // «Убрать обои» показываем только если установлены не дефолтные
         const st = FAR.WMWallpaper._load();
         if (st.source !== 'default') {
             FAR.WM._addCtxItem(menu, '🗑 Убрать обои', function () {
@@ -250,7 +307,6 @@ FAR.WM._positionContextMenu = function (menu, x, y) {
     menu.style.left = x + 'px';
     menu.style.top  = y + 'px';
     menu.classList.add('open');
-    // Не вылезать за пределы
     const rect = menu.getBoundingClientRect();
     if (rect.right > window.innerWidth - 4) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
     if (rect.bottom > window.innerHeight - 4) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
@@ -270,7 +326,6 @@ FAR.WM._bindDesktopUI = function () {
     if (!desktop || desktop._wmBound) return;
     desktop._wmBound = true;
 
-    // Клик по пустому месту — снять выделение
     desktop.addEventListener('mousedown', function (e) {
         if (e.target === desktop || e.target.classList.contains('wm-desktop-icons')) {
             document.querySelectorAll('.wm-desktop-icon.selected').forEach(function (x) {
@@ -279,7 +334,6 @@ FAR.WM._bindDesktopUI = function () {
         }
     });
 
-    // ПКМ по пустому месту
     desktop.addEventListener('contextmenu', function (e) {
         if (e.target.closest('.wm-window')) return;
         if (e.target.closest('.wm-desktop-icon')) return;
@@ -288,11 +342,10 @@ FAR.WM._bindDesktopUI = function () {
     });
 };
 
-// Расширяем enter — добавим привязку после рендера
+// Расширяем enter — добавим привязку и рендер после входа
 FAR.WM._origEnter2 = FAR.WM.enter;
 FAR.WM.enter = function () {
     FAR.WM._origEnter2.apply(this, arguments);
     FAR.WM._bindDesktopUI();
     FAR.WM._renderDesktopIcons();
 };
-
