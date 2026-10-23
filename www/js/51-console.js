@@ -122,6 +122,10 @@ FAR._createConsole = function (hostEl, opts) {
     const elTermHost = hostEl.querySelector('[data-role="terminal"]');
 
     const S = { es: null, connected: false, destroyed: false };
+
+    // Генерируем уникальный ID сессии для этой конкретной консоли
+    const sessionId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
     let term = null;
     let fitAddon = null;
     let resizeObserver = null;
@@ -183,7 +187,8 @@ FAR._createConsole = function (hostEl, opts) {
             if (token) headers['Authorization'] = 'Bearer ' + token;
 
             try {
-                const res = await fetch(baseUrl + '/api/console/input', {
+                // Передаем sessionId в URL
+                const res = await fetch(baseUrl + '/api/console/input?sessionId=' + encodeURIComponent(sessionId), {
                     method: 'POST', headers: headers, body: JSON.stringify({ data: data })
                 });
                 if (!res.ok) console.warn('[console] input failed:', res.status);
@@ -198,7 +203,8 @@ FAR._createConsole = function (hostEl, opts) {
             if (token) headers['Authorization'] = 'Bearer ' + token;
 
             try {
-                await fetch(baseUrl + '/api/console/resize', {
+                // Передаем sessionId в URL
+                await fetch(baseUrl + '/api/console/resize?sessionId=' + encodeURIComponent(sessionId), {
                     method: 'POST', headers: headers, body: JSON.stringify({ cols: size.cols, rows: size.rows })
                 });
             } catch (e) {}
@@ -238,7 +244,8 @@ FAR._createConsole = function (hostEl, opts) {
             return;
         }
 
-        const url = baseUrl + '/api/console/events?token=' + encodeURIComponent(token);
+        // Передаем sessionId в URL
+        const url = baseUrl + '/api/console/events?token=' + encodeURIComponent(token) + '&sessionId=' + encodeURIComponent(sessionId);
         setStatus('Подключение…', 'loading');
 
         const es = new EventSource(url);
@@ -300,7 +307,8 @@ FAR._createConsole = function (hostEl, opts) {
         if (token) headers['Authorization'] = 'Bearer ' + token;
 
         try {
-            await fetch(baseUrl + '/api/console/input', {
+            // Передаем sessionId в URL
+            await fetch(baseUrl + '/api/console/input?sessionId=' + encodeURIComponent(sessionId), {
                 method: 'POST', headers: headers, body: JSON.stringify({ data: '\x03' })
             });
         } catch (e) {}
@@ -343,7 +351,7 @@ FAR.WM.registerConsoleApp = function () {
         title: 'Console',
         icon: '🖥',
         keywords: 'консоль терминал shell command console',
-        singleton: true,
+        singleton: false,
         width: 900,
         height: 600,
         open: async function (win, props) {

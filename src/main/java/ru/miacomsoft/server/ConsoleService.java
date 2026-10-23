@@ -4,6 +4,9 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class ConsoleService {
     private final String defaultShell;
@@ -12,19 +15,38 @@ public class ConsoleService {
     private final long maxOutputBytes;
 
     private final Map<String, ConsoleSession> sessions = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor();
 
     public ConsoleService(String shell, String cwd, long timeoutSec, long maxOutputBytes) {
         this.defaultShell = shell;
         this.defaultCwd = cwd;
         this.timeoutSec = timeoutSec;
         this.maxOutputBytes = maxOutputBytes;
+
+        // Запускаем очистку зомби-сессий каждую минуту
+        cleaner.scheduleAtFixedRate(this::cleanupDeadSessions, 1, 1, TimeUnit.MINUTES);
+    }
+
+    private void cleanupDeadSessions() {
+        long now = System.currentTimeMillis();
+        sessions.entrySet().removeIf(entry -> {
+            ConsoleSession s = entry.getValue();
+            if (s.isClosed()) {
+                return true;
+            }
+            // Если нет SSE-клиентов и прошло больше 5 минут - убиваем процесс
+            if (s.getSseCount() == 0 && (now - s.getLastActivity() > 5 * 60 * 1000)) {
+                s.close();
+                return true;
+            }
+            return false;
+        });
     }
 
     public ConsoleSession getOrCreate(String sessionId) {
         return sessions.computeIfAbsent(sessionId, id -> new ConsoleSession());
     }
 
-    // Автоматически определяет оболочку, если в конфиге пусто
     private String resolveShell() {
         if (defaultShell != null && !defaultShell.trim().isEmpty()) {
             return defaultShell;
@@ -35,14 +57,13 @@ public class ConsoleService {
             return "cmd.exe";
         }
 
-        // Ищем доступные оболочки (Linux Mint, Termux, Android)
         String[] candidates = {
                 "/bin/bash",
                 "/usr/bin/bash",
                 "/bin/sh",
                 "/usr/bin/sh",
-                "/data/data/com.termux/files/usr/bin/bash", // Termux
-                "/system/bin/sh" // Android
+                "/data/data/com.termux/files/usr/bin/bash",
+                "/system/bin/sh"
         };
 
         for (String c : candidates) {
@@ -51,10 +72,9 @@ public class ConsoleService {
             }
         }
 
-        return "sh"; // Если ничего не найдено, пробуем через переменную PATH
+        return "sh";
     }
 
-    // Автоматически определяет рабочую директорию, если в конфиге пусто или путь не существует
     private String resolveCwd() {
         if (defaultCwd != null && !defaultCwd.trim().isEmpty()) {
             File dir = new File(defaultCwd);

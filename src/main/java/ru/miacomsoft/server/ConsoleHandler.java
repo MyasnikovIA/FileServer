@@ -8,6 +8,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.UUID;
 
 public class ConsoleHandler implements HttpHandler {
 
@@ -40,6 +42,18 @@ public class ConsoleHandler implements HttpHandler {
         return s;
     }
 
+    private String getSessionId(HttpExchange ex, boolean generateIfMissing) {
+        Map<String, String> q = FileServer.parseQuery(ex.getRequestURI().getQuery());
+        String sessionId = q.get("sessionId");
+        if (sessionId == null || sessionId.isEmpty()) {
+            if (generateIfMissing) {
+                return UUID.randomUUID().toString();
+            }
+            return null;
+        }
+        return sessionId;
+    }
+
     private void handleEvents(HttpExchange ex) throws IOException {
         if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
             FileServer.sendError(ex, 405, "Method not allowed");
@@ -49,6 +63,9 @@ public class ConsoleHandler implements HttpHandler {
         AuthService.Session s = auth(ex);
         if (s == null) return;
 
+        String sessionId = getSessionId(ex, true);
+        String key = s.username + "_" + sessionId;
+
         FileServer.handleCors(ex);
         ex.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         ex.getResponseHeaders().set("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -57,7 +74,6 @@ public class ConsoleHandler implements HttpHandler {
         ex.sendResponseHeaders(200, 0);
 
         SseConnection conn = new SseConnection(ex);
-        String key = s.username;
 
         ConsoleSession session = FileServer.console().getOrCreate(key);
         FileServer.console().startShell(key);
@@ -65,7 +81,8 @@ public class ConsoleHandler implements HttpHandler {
 
         try {
             JSONObject ready = new JSONObject();
-            ready.put("user", key);
+            ready.put("user", s.username);
+            ready.put("sessionId", sessionId); // <--- Отправляем ID клиенту
             ready.put("cwd", System.getProperty("user.dir"));
             conn.send("ready", ready.toString());
 
@@ -80,7 +97,6 @@ public class ConsoleHandler implements HttpHandler {
                 }
             }
         } finally {
-            // ВАЖНО: передаем conn, чтобы отвязать именно его
             session.detachSse(conn);
             conn.close();
         }
@@ -93,6 +109,13 @@ public class ConsoleHandler implements HttpHandler {
         }
         AuthService.Session s = auth(ex);
         if (s == null) return;
+
+        String sessionId = getSessionId(ex, false);
+        if (sessionId == null) {
+            FileServer.sendError(ex, 400, "sessionId is required");
+            return;
+        }
+        String key = s.username + "_" + sessionId;
 
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         try (InputStream is = ex.getRequestBody()) {
@@ -111,7 +134,7 @@ public class ConsoleHandler implements HttpHandler {
             data = body;
         }
 
-        FileServer.console().writeInput(s.username, data);
+        FileServer.console().writeInput(key, data);
 
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
@@ -125,6 +148,13 @@ public class ConsoleHandler implements HttpHandler {
         }
         AuthService.Session s = auth(ex);
         if (s == null) return;
+
+        String sessionId = getSessionId(ex, false);
+        if (sessionId == null) {
+            FileServer.sendError(ex, 400, "sessionId is required");
+            return;
+        }
+        String key = s.username + "_" + sessionId;
 
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         try (InputStream is = ex.getRequestBody()) {
@@ -141,7 +171,7 @@ public class ConsoleHandler implements HttpHandler {
                 rows = o.optInt("rows", 24);
             } catch (Exception e) { /* ignore */ }
         }
-        FileServer.console().resize(s.username, cols, rows);
+        FileServer.console().resize(key, cols, rows);
 
         JSONObject ok = new JSONObject();
         ok.put("ok", true);

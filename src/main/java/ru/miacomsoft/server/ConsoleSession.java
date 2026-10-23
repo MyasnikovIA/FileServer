@@ -17,18 +17,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ConsoleSession {
     private Process process;
     private OutputStream stdin;
     private InputStream stdout;
     private boolean useNativePty = false;
-    private boolean closed = false;
+    private volatile boolean closed = false;
 
-    // Путь к файлу, в котором утилита script сохранит имя псевдотерминала
     private String ttyFilePath = null;
-
     private final List<SseConnection> sseList = new CopyOnWriteArrayList<>();
+    private final AtomicLong lastActivity = new AtomicLong(System.currentTimeMillis());
 
     public ConsoleSession() {
     }
@@ -42,7 +42,6 @@ public class ConsoleSession {
         env.put("LANG", "C.UTF-8");
 
         try {
-            // 1. Пытаемся запустить через нативный PTY (Linux Mint, Windows)
             PtyProcessBuilder ptyBuilder = new PtyProcessBuilder(new String[]{shell})
                     .setEnvironment(env)
                     .setDirectory(cwd);
@@ -50,16 +49,13 @@ public class ConsoleSession {
             useNativePty = true;
             System.out.println("[Console] Используется нативный PTY.");
         } catch (Throwable t) {
-            // 2. Фолбэк для Termux / Android с использованием встроенной утилиты script
             System.err.println("[Console] Нативный PTY не поддерживается. Используем встроенную утилиту 'script'.");
 
             try {
                 String tempDir = System.getProperty("java.io.tmpdir");
                 ttyFilePath = tempDir + "/far_tty_" + System.nanoTime() + ".txt";
 
-                // Команда: script создает TTY, записывает его имя в файл и запускает bash
                 String cmd = "tty > " + ttyFilePath + "; exec " + shell + " -i";
-
                 ProcessBuilder pb = new ProcessBuilder("script", "-q", "-c", cmd, "/dev/null");
                 pb.directory(new File(cwd));
                 pb.environment().putAll(env);
@@ -67,7 +63,6 @@ public class ConsoleSession {
                 process = pb.start();
                 useNativePty = false;
             } catch (Exception e) {
-                // Если утилита script недоступна, запускаем просто без TTY (mc не будет масштабироваться)
                 System.err.println("[Console] Утилита 'script' не найдена. Запуск без TTY.");
                 ProcessBuilder pb = new ProcessBuilder(shell);
                 pb.directory(new File(cwd));
@@ -113,23 +108,18 @@ public class ConsoleSession {
     }
 
     public void resize(int cols, int rows) {
-        // Если размер нулевой (окно свернули) - игнорируем
         if (cols <= 0 || rows <= 0) return;
 
         if (useNativePty && process instanceof PtyProcess) {
-            // Для Windows и Linux Mint
             try {
                 ((PtyProcess) process).setWinSize(new WinSize(cols, rows));
             } catch (Throwable t) {}
         } else if (ttyFilePath != null) {
-            // Для Termux / Android: читаем имя терминала и меняем его размер через stty
             try {
                 Path p = Paths.get(ttyFilePath);
                 if (Files.exists(p)) {
                     String tty = new String(Files.readAllBytes(p), StandardCharsets.UTF_8).trim();
                     if (!tty.isEmpty() && tty.startsWith("/dev/")) {
-                        // Встроенная команда stty меняет размер PTY.
-                        // Android ядро само пошлет SIGWINCH программе (mc/vim).
                         new ProcessBuilder("stty", "-F", tty, "rows", String.valueOf(rows), "cols", String.valueOf(cols)).start();
                     }
                 }
@@ -141,6 +131,7 @@ public class ConsoleSession {
 
     public void writeInput(String data) throws IOException {
         if (stdin != null) {
+            lastActivity.set(System.currentTimeMillis());
             stdin.write(data.getBytes(StandardCharsets.UTF_8));
             stdin.flush();
         }
@@ -148,10 +139,20 @@ public class ConsoleSession {
 
     public void attachSse(SseConnection sse) {
         sseList.add(sse);
+        lastActivity.set(System.currentTimeMillis());
     }
 
     public void detachSse(SseConnection sse) {
         sseList.remove(sse);
+        lastActivity.set(System.currentTimeMillis());
+    }
+
+    public int getSseCount() {
+        return sseList.size();
+    }
+
+    public long getLastActivity() {
+        return lastActivity.get();
     }
 
     public boolean isClosed() {
@@ -160,7 +161,15 @@ public class ConsoleSession {
 
     public void close() {
         closed = true;
-        if (process != null) process.destroy();
+        if (process != null) {
+            process.destroy();
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ignored) {}
+            if (process.isAlive()) {
+                process.destroyForcibly(); // Убиваем принудительно, если не умер
+            }
+        }
         sseList.clear();
         if (ttyFilePath != null) {
             try { Files.deleteIfExists(Paths.get(ttyFilePath)); } catch (Exception e) {}
