@@ -2386,6 +2386,10 @@ FAR.WM._installOpenFileWrapper = function () {
                 return FAR.WM.openApp('lbrn2', { props: { file: item, side: side } });
             }
 
+            if (typeof FAR.isGcode === 'function' && FAR.isGcode(item)) {
+                return FAR.WM.openApp('gcode', { props: { file: item, side: side } });
+            }
+
             if (typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(item)) {
                 if (typeof FAR.openBrowserFromItem === 'function') {
                     FAR.openBrowserFromItem(item, side);

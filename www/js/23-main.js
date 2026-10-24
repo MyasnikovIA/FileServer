@@ -35,6 +35,7 @@ FAR.injectModals = function() {
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',
         'modals/lbrn2-viewer.html',
+        'modals/gcode-viewer.html',
         'modals/browser.html',
         'modals/gamepad-setup.html',
         'modals/gpu-monitor.html',

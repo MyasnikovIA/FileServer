@@ -15,7 +15,8 @@ FAR.VIEWER_MODALS = [
     { modal: 'jsdosViewerModal',       prev: 'jsdosPrevBtn',  next: 'jsdosNextBtn'  },
     { modal: 'nesViewerModal',         prev: 'nesPrevBtn',    next: 'nesNextBtn'    },
     { modal: 'emulatorViewerModal',    prev: 'emuPrevBtn',    next: 'emuNextBtn'    },
-    { modal: 'lbrn2ViewerModal',       prev: 'lbrn2PrevBtn',  next: 'lbrn2NextBtn'  }
+    { modal: 'lbrn2ViewerModal',       prev: 'lbrn2PrevBtn',  next: 'lbrn2NextBtn'  },
+    { modal: 'gcodeViewerModal',       prev: 'gcodePrevBtn',  next: 'gcodeNextBtn'  }
 ];
 
 FAR._viewerEnsureFn = function (name) {
@@ -93,6 +94,7 @@ FAR._viewerCloseAll = function () {
     try { if (typeof FAR.closeNesViewer      === 'function') FAR.closeNesViewer();      } catch (e) {}
     try { if (typeof FAR.closeEmulatorViewer === 'function') FAR.closeEmulatorViewer(); } catch (e) {}
     try { if (typeof FAR.closeLbrn2Viewer    === 'function') FAR.closeLbrn2Viewer();    } catch (e) {}
+    try { if (typeof FAR.closeGcodeViewer    === 'function') FAR.closeGcodeViewer();    } catch (e) {}
 };
 
 FAR.viewerNavigate = async function (dir) {
@@ -227,6 +229,16 @@ FAR.openFile = async function (item, side, index) {
             return;
         }
     } catch (e) { console.warn('Ошибка проверки LBRN2:', e); }
+
+    try {
+        if (typeof FAR.isGcode === 'function' && FAR.isGcode(item)) {
+            if (!FAR._viewerEnsureFn('openGcodeViewer')) return;
+            await FAR.openGcodeViewer(item, side);
+            if (myToken !== FAR._viewerToken) return;
+            FAR._viewerUpdateNavButtons();
+            return;
+        }
+    } catch (e) { console.warn('Ошибка проверки G-code:', e); }
 
     try {
         if (typeof FAR.isPanorama === 'function') {
