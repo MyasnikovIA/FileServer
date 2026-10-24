@@ -53,16 +53,23 @@
     <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру" disabled>🔍 Debug</button>
     <button onclick="FAR.openGamepadSetup()" id="btnGamepad" title="Настроить джойстик">🎮 Джойстик</button>
     <button onclick="FAR.openOllama()" id="btnOllama" title="Ollama Chat (локальная LLM)">🦙 Ollama</button>
-    <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)" style="display:none;">🖥️ Консоль</button>
-    <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺 Трансляция</button>
-    <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">🎥 Вещать</button>
+    <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)"
+            style="display:none;">🖥️ Консоль
+    </button>
+    <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺
+        Трансляция
+    </button>
+    <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">
+        🎥 Вещать
+    </button>
     <button onclick="FAR.onAuthButton()" class="btn-auth" id="btnAuth" title="Войти / Выйти">🔐 LogIn</button>
     <button onclick="FAR.WM.toggle()" id="btnWM" title="Оконный режим">🖥 Рабочий стол</button>
     <button onclick="FAR.gamepadModeCycle()"
             oncontextmenu="event.preventDefault(); FAR.openGamepadSetup();"
             class="gp-mode-indicator gp-mode-files"
             id="gpModeIndicator"
-            title="ЛКМ — переключить режим, ПКМ — настройка">🎮 Файлы</button>
+            title="ЛКМ — переключить режим, ПКМ — настройка">🎮 Файлы
+    </button>
     <span style="color:#a6adc8;font-size:12px;margin-left:auto;" id="statusText">Инициализация…</span>
 </div>
 
@@ -71,7 +78,9 @@
         <div class="panel-header">
             <span class="path" id="pathLeft">/</span>
             <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')" title="Сменить сервер для левой панели">🗄️</button>
+                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')"
+                        title="Сменить сервер для левой панели">🗄️
+                </button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '..')">⬆</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '/')">🏠</button>
             </div>
@@ -87,7 +96,9 @@
         <div class="panel-header">
             <span class="path" id="pathRight">/</span>
             <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')" title="Сменить сервер для правой панели">🗄️</button>
+                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')"
+                        title="Сменить сервер для правой панели">🗄️
+                </button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '..')">⬆</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '/')">🏠</button>
             </div>
