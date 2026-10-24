@@ -34,6 +34,7 @@ FAR.injectModals = function() {
         'modals/nes-viewer.html',
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',
+        'modals/lbrn2-viewer.html',
         'modals/browser.html',
         'modals/gamepad-setup.html',
         'modals/gpu-monitor.html',

@@ -871,12 +871,6 @@
     inset: 0;
     pointer-events: none;
 }
-
-/* ============================================================
-   Меню Пуск: строки категорий + portal-submenu
-   ============================================================ */
-
-/* --- Строка категории --- */
 .wm-start-cat-row {
     display: flex;
     align-items: center;
@@ -939,7 +933,6 @@
     transform: translateX(2px);
 }
 
-/* --- Всплывающее подменю (portal в body) --- */
 .wm-start-submenu {
     background: rgba(20, 24, 36, 0.98);
     border: 1px solid #2b2b3c;
@@ -967,6 +960,7 @@
         transform: translateX(0);
     }
 }
+
 .wm-start-submenu-title {
     font-size: 10px;
     font-weight: bold;
@@ -982,13 +976,10 @@
     text-overflow: ellipsis;
 }
 
-
-/* Пункты внутри submenu используют .wm-start-item (уже определён в wm.css) */
 .wm-start-submenu .wm-start-item {
     padding: 8px 10px;
 }
 
-/* Адаптив: на узких экранах submenu чуть уже */
 @media (max-width: 480px) {
     .wm-start-submenu {
         min-width: 180px;

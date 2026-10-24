@@ -79,7 +79,7 @@ FAR.WM._endDrag = function () {
         FAR.WM._dragGhostEl = null;
     }
 
-    // ← НОВОЕ: снимаем hover с внешних приёмников (например, Ollama)
+    // Снимаем hover с внешних приёмников (например, Ollama)
     if (typeof FAR._setExternalHover === 'function') {
         FAR._setExternalHover(null);
     }
@@ -448,7 +448,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
 
             if (!dragging) return;
 
-            // ← НОВОЕ: сначала проверяем внешние приёмники (Ollama и др.)
+            // Сначала проверяем внешние приёмники (Ollama и др.)
             const ext = (typeof FAR._findExternalDropTarget === 'function')
                 ? FAR._findExternalDropTarget(ev.clientX, ev.clientY)
                 : null;
@@ -601,7 +601,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
 };
 
 FAR.WM._updateDropTargetUnderCursor = function (x, y, sourceWinId) {
-    // ← НОВОЕ: сначала — внешние приёмники (Ollama и др.)
+    // Сначала — внешние приёмники (Ollama и др.)
     const ext = (typeof FAR._findExternalDropTarget === 'function')
         ? FAR._findExternalDropTarget(x, y)
         : null;
@@ -2380,6 +2380,10 @@ FAR.WM._installOpenFileWrapper = function () {
 
             if (typeof FAR.isPdf === 'function' && FAR.isPdf(item)) {
                 return FAR.WM.openApp('pdf', { props: { file: item, side: side } });
+            }
+
+            if (typeof FAR.isLbrn2 === 'function' && FAR.isLbrn2(item)) {
+                return FAR.WM.openApp('lbrn2', { props: { file: item, side: side } });
             }
 
             if (typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(item)) {

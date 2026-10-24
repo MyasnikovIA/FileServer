@@ -14,7 +14,8 @@ FAR.VIEWER_MODALS = [
     { modal: 'videoViewerModal',       prev: 'videoPrevBtn',  next: 'videoNextBtn'  },
     { modal: 'jsdosViewerModal',       prev: 'jsdosPrevBtn',  next: 'jsdosNextBtn'  },
     { modal: 'nesViewerModal',         prev: 'nesPrevBtn',    next: 'nesNextBtn'    },
-    { modal: 'emulatorViewerModal',    prev: 'emuPrevBtn',    next: 'emuNextBtn'    }
+    { modal: 'emulatorViewerModal',    prev: 'emuPrevBtn',    next: 'emuNextBtn'    },
+    { modal: 'lbrn2ViewerModal',       prev: 'lbrn2PrevBtn',  next: 'lbrn2NextBtn'  }
 ];
 
 FAR._viewerEnsureFn = function (name) {
@@ -91,6 +92,7 @@ FAR._viewerCloseAll = function () {
     try { if (typeof FAR.closeJsdosViewer    === 'function') FAR.closeJsdosViewer();    } catch (e) {}
     try { if (typeof FAR.closeNesViewer      === 'function') FAR.closeNesViewer();      } catch (e) {}
     try { if (typeof FAR.closeEmulatorViewer === 'function') FAR.closeEmulatorViewer(); } catch (e) {}
+    try { if (typeof FAR.closeLbrn2Viewer    === 'function') FAR.closeLbrn2Viewer();    } catch (e) {}
 };
 
 FAR.viewerNavigate = async function (dir) {
@@ -217,6 +219,16 @@ FAR.openFile = async function (item, side, index) {
     } catch (e) { console.warn('Ошибка проверки PDF:', e); }
 
     try {
+        if (typeof FAR.isLbrn2 === 'function' && FAR.isLbrn2(item)) {
+            if (!FAR._viewerEnsureFn('openLbrn2Viewer')) return;
+            await FAR.openLbrn2Viewer(item, side);
+            if (myToken !== FAR._viewerToken) return;
+            FAR._viewerUpdateNavButtons();
+            return;
+        }
+    } catch (e) { console.warn('Ошибка проверки LBRN2:', e); }
+
+    try {
         if (typeof FAR.isPanorama === 'function') {
             const isPano = await FAR.isPanorama(item, side);
             if (myToken !== FAR._viewerToken) return;
@@ -318,10 +330,6 @@ FAR.closeViewerOutside = function (e) {
     if (e.target === e.currentTarget) FAR.closeViewer();
 };
 
-/**
- * Скачивание текущего файла — использует СВОЙ инстанс прогресса,
- * чтобы не конфликтовать с параллельно идущими copy/move.
- */
 FAR.downloadCurrentFile = async function () {
     if (!FAR.currentFileData) {
         FAR.toast('Нет данных', 'warning');
