@@ -36,7 +36,8 @@ FAR.injectModals = function() {
         'modals/pdf-viewer.html',
         'modals/browser.html',
         'modals/gamepad-setup.html',
-        'modals/gpu-monitor.html',              // ← НОВОЕ
+        'modals/gpu-monitor.html',
+        'modals/ollama.html',
         'modals/progress.html',
         'modals/loading.html',
         'modals/debug.html',

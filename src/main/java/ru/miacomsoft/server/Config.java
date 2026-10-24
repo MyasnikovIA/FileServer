@@ -15,23 +15,30 @@ public class Config {
     public String host = "0.0.0.0";
     public String webPath = "www";
 
-    // --- HTTPS ---
     public boolean httpsEnabled = false;
     public String httpsCert = "";
     public String httpsKey = "";
     public String httpsKeystore = "";
     public String httpsPassword = "";
 
-    // ---- Настройки консоли ----
     public String consoleShell = "";
     public String consoleCwd = "";
     public long consoleTimeoutSec = 300;
     public long consoleMaxOutputBytes = 1024 * 1024;
 
-    // ---- Настройки VideoChat ----
     public boolean videoChatEnabled = false;
     public int videoChatPort = 8081;
     public String wsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+    // ---- Ollama (только CLI) ----
+    // enabled: включён ли модуль
+    // binary:  путь/имя CLI-утилиты `ollama` (по умолчанию "ollama")
+    // cwd:     рабочий каталог subprocess
+    //
+    // НИКАКОГО url/apiUrl — никаких HTTP-запросов к Ollama.
+    public boolean ollamaEnabled = true;
+    public String ollamaBinary = "ollama";
+    public String ollamaCwd = "";
 
     public Map<String, User> users = new LinkedHashMap<>();
     public List<Share> shares = new ArrayList<>();
@@ -88,7 +95,6 @@ public class Config {
             cfg.host = http.optString("host", cfg.host);
         }
 
-        // Читаем блок HTTPS (если он есть)
         JSONObject https = root.optJSONObject("https");
         if (https != null) {
             cfg.httpsEnabled = https.optBoolean("enabled", false);
@@ -115,6 +121,14 @@ public class Config {
             cfg.videoChatPort = vc.optInt("port", 8081);
             String guid = vc.optString("wsGuid", "").trim();
             if (!guid.isEmpty()) cfg.wsGuid = guid;
+        }
+
+        JSONObject ol = root.optJSONObject("ollama");
+        if (ol != null) {
+            cfg.ollamaEnabled = ol.optBoolean("enabled", true);
+            String bin = ol.optString("binary", "ollama").trim();
+            if (!bin.isEmpty()) cfg.ollamaBinary = bin;
+            cfg.ollamaCwd = ol.optString("cwd", "").trim();
         }
 
         JSONArray arrU = root.optJSONArray("users");

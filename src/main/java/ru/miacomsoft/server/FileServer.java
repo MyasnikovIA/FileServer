@@ -40,6 +40,7 @@ public class FileServer {
     private static Path webRoot;
     private static ConsoleService consoleService;
     private static VideoChatServer videoChatServer;
+    private static OllamaProcessService ollamaService;         // ← ИЗМЕНЕНО
 
     private static StaticHandler staticHandler;
     private static RootHandler   rootHandler;
@@ -81,6 +82,12 @@ public class FileServer {
                 config.consoleTimeoutSec,
                 config.consoleMaxOutputBytes);
 
+        // ---- Ollama через консоль (subprocess `ollama run`) ----
+        ollamaService = new OllamaProcessService(
+                config.ollamaBinary,
+                config.ollamaCwd
+        );
+
         HttpServer server;
         InetSocketAddress addr = new InetSocketAddress(config.host, config.port);
         SSLContext sslContext = null;
@@ -103,7 +110,8 @@ public class FileServer {
         server.createContext("/api",         new ApiHandler());
         server.createContext("/",            rootHandler);
         server.createContext("/api/console", new ConsoleHandler());
-        server.createContext("/api/gpu",     new GpuHandler());   // ← НОВОЕ
+        server.createContext("/api/gpu",     new GpuHandler());
+        server.createContext("/api/ollama",  new OllamaHandler(ollamaService));  // ← ИЗМЕНЕНО
         server.createContext("/api/proxy",   ex -> ProxyHandler.handle(ex));
 
         server.setExecutor(Executors.newFixedThreadPool(16));
@@ -126,6 +134,8 @@ public class FileServer {
         System.out.println("  web root : " + webRoot + (Files.isDirectory(webRoot) ? "" : "  [NOT FOUND]"));
         System.out.println("  users    : " + config.users.keySet());
         System.out.println("  shares   : " + config.shares.size());
+        System.out.println("  ollama   : " + config.ollamaBinary +
+                (config.ollamaEnabled ? " (via process)" : "  [DISABLED]"));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try { server.stop(0); } catch (Exception ignored) {}
@@ -191,6 +201,7 @@ public class FileServer {
     static Path webRoot() { return webRoot; }
     static RootHandler rootHandler() { return rootHandler; }
     static StaticHandler staticHandler() { return staticHandler; }
+    static OllamaProcessService ollama() { return ollamaService; }
 
     static void broadcastEvent(String event, String data) {
         for (Map.Entry<String, SseConnection> e : sseClients.entrySet()) {

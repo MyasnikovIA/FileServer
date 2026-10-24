@@ -1,18 +1,69 @@
 // ============================================================
 // Drag&drop файлов/папок из Проводника ОС в панель +
 // drag&drop файлов МЕЖДУ панелями (panel-to-panel).
+// + глобальный реестр внешних drop-target'ов (Ollama и др.)
 // ============================================================
-//
-// Два независимых механизма:
-//
-//   A) OS → panel: HTML5 drag events (dataTransfer.types содержат 'Files').
-//      Обработчик — setupPanelDragDrop(panelId), существовал раньше.
-//
-//   B) panel → panel: мышь (mousedown/mousemove/mouseup) с порогом 5px.
-//      Обработчик — _setupPanelItemDrag(panelId), НОВОЕ.
-//      По Shift+drop — перенос (move); без Shift — копирование (copy).
 
 FAR._dragCounter = 0;
+
+// ← НОВОЕ: реестр внешних приёмников drag&drop
+FAR._externalDropTargets = FAR._externalDropTargets || [];
+
+/**
+ * Регистрирует внешний drop-target.
+ * target должен иметь:
+ *   containsPoint(x, y) → boolean
+ *   acceptDrop(items, sourceSide) → void|Promise
+ *   onHover?(isOver:boolean)      → void (необязательно)
+ * Возвращает функцию unregister().
+ */
+FAR.registerExternalDropTarget = function (target) {
+    if (!target
+        || typeof target.containsPoint !== 'function'
+        || typeof target.acceptDrop !== 'function') {
+        console.warn('[registerExternalDropTarget] invalid target');
+        return function () {};
+    }
+    FAR._externalDropTargets.push(target);
+    return function unregister() {
+        const idx = FAR._externalDropTargets.indexOf(target);
+        if (idx >= 0) {
+            FAR._externalDropTargets.splice(idx, 1);
+            // Снимаем hover, если он остался
+            if (target._hover && typeof target.onHover === 'function') {
+                try { target.onHover(false); } catch (e) {}
+                target._hover = false;
+            }
+        }
+    };
+};
+
+FAR._findExternalDropTarget = function (x, y) {
+    // Идём с конца — последний зарегистрированный имеет приоритет
+    for (let i = FAR._externalDropTargets.length - 1; i >= 0; i--) {
+        const t = FAR._externalDropTargets[i];
+        try {
+            if (t.containsPoint(x, y)) return t;
+        } catch (e) { /* ignore */ }
+    }
+    return null;
+};
+
+FAR._setExternalHover = function (target) {
+    for (const t of FAR._externalDropTargets) {
+        const shouldBe = (t === target);
+        if (!!t._hover !== shouldBe) {
+            t._hover = shouldBe;
+            if (typeof t.onHover === 'function') {
+                try { t.onHover(shouldBe); } catch (e) {}
+            }
+        }
+    }
+};
+
+// ============================================================
+// OS → panel
+// ============================================================
 
 FAR.getDropTargetPath = function(panelId) {
     const side = panelId === 'panelLeft' ? 'left' : 'right';
@@ -84,7 +135,6 @@ FAR.setupPanelDragDrop = function(panelId) {
         await FAR.uploadFilesToPath(files, targetPath);
     });
 
-    // Внутренний drag&drop между панелями
     FAR._setupPanelItemDrag(panelId);
 };
 
@@ -168,6 +218,7 @@ FAR.traverseEntry = function(entry, relativePath, result) {
 
 // ============================================================
 // Внутренний drag&drop между панелями (panel → panel)
+// + внешние приёмники
 // ============================================================
 
 FAR._panelDragState = null;
@@ -183,7 +234,7 @@ FAR._setupPanelItemDrag = function (panelId) {
     panel.addEventListener('mousedown', function (e) {
         if (e.button !== 0) return;
         if (!FAR.db) return;
-        if (e.ctrlKey || e.metaKey) return;   // Ctrl — оставляем для выделения
+        if (e.ctrlKey || e.metaKey) return;
 
         const itemEl = e.target.closest('.file-item');
         if (!itemEl) return;
@@ -193,7 +244,7 @@ FAR._setupPanelItemDrag = function (panelId) {
 
         const ctx = FAR.side[side];
         if (!ctx) return;
-        if (!ctx.selectedIdx.has(idx)) return;   // тащим только уже выделенное
+        if (!ctx.selectedIdx.has(idx)) return;
 
         const startX = e.clientX;
         const startY = e.clientY;
@@ -216,15 +267,37 @@ FAR._setupPanelItemDrag = function (panelId) {
             document.removeEventListener('mousemove', onMove, true);
             document.removeEventListener('mouseup', onUp, true);
 
-            if (dragging) {
-                const targetPanel = FAR._getPanelUnderCursor(ev.clientX, ev.clientY);
-                if (targetPanel && targetPanel !== panelId) {
-                    const targetSide = targetPanel === 'panelLeft' ? 'left' : 'right';
-                    const mode = ev.shiftKey ? 'move' : 'copy';
-                    FAR._performPanelDrop(targetSide, mode);
-                } else {
-                    FAR._endPanelDrag();
+            if (!dragging) return;
+
+            // ← НОВОЕ: сначала внешние drop-target'ы (например, Ollama)
+            const ext = FAR._findExternalDropTarget(ev.clientX, ev.clientY);
+            if (ext && FAR._panelDragState) {
+                const items = FAR._panelDragState.items.slice();
+                const srcSide = FAR._panelDragState.sourceSide;
+                FAR._endPanelDrag();
+                try {
+                    const ret = ext.acceptDrop(items, srcSide);
+                    if (ret && typeof ret.catch === 'function') {
+                        ret.catch(function (err) {
+                            console.error('[external drop]', err);
+                            FAR.toast('Не удалось принять файлы: ' + err.message, 'error');
+                        });
+                    }
+                } catch (err) {
+                    console.error('[external drop]', err);
+                    FAR.toast('Не удалось принять файлы: ' + err.message, 'error');
                 }
+                return;
+            }
+
+            // Затем — панели FAR (как раньше)
+            const targetPanel = FAR._getPanelUnderCursor(ev.clientX, ev.clientY);
+            if (targetPanel && targetPanel !== panelId) {
+                const targetSide = targetPanel === 'panelLeft' ? 'left' : 'right';
+                const mode = ev.shiftKey ? 'move' : 'copy';
+                FAR._performPanelDrop(targetSide, mode);
+            } else {
+                FAR._endPanelDrag();
             }
         };
 
@@ -269,7 +342,7 @@ FAR._beginPanelDrag = function (sourceSide, x, y) {
     };
 
     FAR.setStatus('Перетаскивание: ' + items.length +
-        ' элемент(ов). Отпустите на другой панели (Shift — перенос).');
+        ' элемент(ов). Отпустите на другой панели или в окне приёмника (Shift — перенос).');
 };
 
 FAR._updatePanelDrag = function (x, y) {
@@ -281,6 +354,10 @@ FAR._updatePanelDrag = function (x, y) {
 FAR._endPanelDrag = function () {
     if (FAR._panelDragState && FAR._panelDragState.ghost) {
         try { FAR._panelDragState.ghost.remove(); } catch (e) {}
+    }
+    // ← НОВОЕ: снимаем hover со внешних приёмников
+    if (typeof FAR._setExternalHover === 'function') {
+        FAR._setExternalHover(null);
     }
     FAR._panelDragState = null;
     FAR.setStatus('');
@@ -305,6 +382,20 @@ FAR._getPanelUnderCursor = function (x, y) {
 };
 
 FAR._highlightPanelUnderCursor = function (x, y, sourceSide) {
+    // ← НОВОЕ: сначала проверяем внешние drop-target'ы
+    const ext = FAR._findExternalDropTarget(x, y);
+    if (ext) {
+        // Снимаем подсветку с панелей
+        document.querySelectorAll('.panel.item-drag-over').forEach(function (el) {
+            el.classList.remove('item-drag-over');
+        });
+        FAR._setExternalHover(ext);
+        return;
+    }
+    // Не над внешним — снимаем hover
+    FAR._setExternalHover(null);
+
+    // Панели FAR (как раньше)
     const target = FAR._getPanelUnderCursor(x, y);
     document.querySelectorAll('.panel.item-drag-over').forEach(function (el) {
         el.classList.remove('item-drag-over');
@@ -332,7 +423,6 @@ FAR._performPanelDrop = async function (targetSide, mode) {
     if (!sSrc || !sSrc.db) { FAR.toast('Источник не подключён', 'warning'); return; }
     if (!sDst || !sDst.db) { FAR.toast('Цель не подключена', 'warning'); return; }
 
-    // Найти индексы выделения по _id
     const files = sSrc.files || [];
     const wantedIds = new Set(state.items.map(function (it) { return it._id; }));
     const indices = [];

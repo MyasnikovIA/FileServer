@@ -59,7 +59,8 @@ FAR.WM._beginDragFromExplorer = function (win, side, startX, startY) {
         }
     });
 
-    FAR.setStatus('Перетаскивание: ' + items.length + ' элемент(ов). Отпустите в окне Проводника.');
+    FAR.setStatus('Перетаскивание: ' + items.length +
+        ' элемент(ов). Отпустите в окне Проводника, Ollama или другом приёмнике.');
 };
 
 FAR.WM._updateDragGhost = function (x, y) {
@@ -76,6 +77,11 @@ FAR.WM._endDrag = function () {
     if (FAR.WM._dragGhostEl) {
         try { FAR.WM._dragGhostEl.remove(); } catch (e) {}
         FAR.WM._dragGhostEl = null;
+    }
+
+    // ← НОВОЕ: снимаем hover с внешних приёмников (например, Ollama)
+    if (typeof FAR._setExternalHover === 'function') {
+        FAR._setExternalHover(null);
     }
 
     FAR.WM.state.windows.forEach(function (w) {
@@ -208,7 +214,7 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     panelHost.appendChild(dropOverlay);
 
     const renderPathBar = function () {
-        if (!FAR.side[side]) return; // Защита от падения
+        if (!FAR.side[side]) return;
         const c = FAR.side[side];
         const norm = FAR.normPath(c.path || '');
         const dbLabel = c.conn ? FAR.connLabel(c.conn) : '— не подключено —';
@@ -310,7 +316,6 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
     FAR.WM._cloneFarPanelInto(panelHost, side);
     renderPathBar();
 
-    // ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Оборачиваем в try-catch и проверяем наличие в DOM
     const pathWatcher = setInterval(function () {
         if (!FAR.WM.getWindow(win.id) || !document.body.contains(win.el)) {
             clearInterval(pathWatcher);
@@ -437,15 +442,43 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
             }
         };
 
-        const onUp = function () {
+        const onUp = function (ev) {
             document.removeEventListener('mousemove', onMove, true);
             document.removeEventListener('mouseup', onUp);
 
-            if (dragging) {
-                if (FAR.WM._dragPayload) {
-                    FAR.WM._endDrag();
-                    FAR.setStatus('');
+            if (!dragging) return;
+
+            // ← НОВОЕ: сначала проверяем внешние приёмники (Ollama и др.)
+            const ext = (typeof FAR._findExternalDropTarget === 'function')
+                ? FAR._findExternalDropTarget(ev.clientX, ev.clientY)
+                : null;
+
+            if (ext && FAR.WM._dragPayload
+                && typeof ext.acceptDrop === 'function') {
+                const payload = FAR.WM._dragPayload;
+                const items = payload.items.slice();
+                const srcSide = payload.sourceSide;
+                FAR.WM._endDrag();
+                FAR.setStatus('');
+                try {
+                    const ret = ext.acceptDrop(items, srcSide);
+                    if (ret && typeof ret.catch === 'function') {
+                        ret.catch(function (err) {
+                            console.error('[WM external drop]', err);
+                            FAR.toast('Не удалось принять файлы: ' + err.message, 'error');
+                        });
+                    }
+                } catch (err) {
+                    console.error('[WM external drop]', err);
+                    FAR.toast('Не удалось принять файлы: ' + err.message, 'error');
                 }
+                return;
+            }
+
+            // Стандартное поведение: drop в другое окно Проводника
+            if (FAR.WM._dragPayload) {
+                FAR.WM._endDrag();
+                FAR.setStatus('');
             }
         };
 
@@ -568,6 +601,14 @@ FAR.WM._mountExplorerPanel = async function (win, props) {
 };
 
 FAR.WM._updateDropTargetUnderCursor = function (x, y, sourceWinId) {
+    // ← НОВОЕ: сначала — внешние приёмники (Ollama и др.)
+    const ext = (typeof FAR._findExternalDropTarget === 'function')
+        ? FAR._findExternalDropTarget(x, y)
+        : null;
+    if (typeof FAR._setExternalHover === 'function') {
+        FAR._setExternalHover(ext);
+    }
+
     FAR.WM.state.windows.forEach(function (w) {
         if (w.appId !== 'explorer') return;
         if (w.id === sourceWinId) return;
@@ -576,7 +617,8 @@ FAR.WM._updateDropTargetUnderCursor = function (x, y, sourceWinId) {
         const isInside = x >= rect.left && x <= rect.right &&
             y >= rect.top  && y <= rect.bottom;
 
-        if (isInside && FAR.WM._dragPayload) {
+        // Если над внешним приёмником — не подсвечиваем Проводник
+        if (isInside && FAR.WM._dragPayload && !ext) {
             w.el.classList.add('wm-drop-target-hover');
         } else {
             w.el.classList.remove('wm-drop-target-hover');
@@ -584,7 +626,6 @@ FAR.WM._updateDropTargetUnderCursor = function (x, y, sourceWinId) {
     });
 };
 
-// ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Правильное возвращение ID при закрытии окна
 FAR.WM._cleanupExplorerPanel = function (win) {
     if (win && win.props && win.props._pathWatcher) {
         clearInterval(win.props._pathWatcher);
@@ -597,7 +638,6 @@ FAR.WM._cleanupExplorerPanel = function (win) {
     const stashed = document.getElementById(origListId + '__wm_stash');
     const cloneAlive = document.getElementById(origListId);
 
-    // Если окно закрывается, клон еще в DOM. Принудительно освобождаем ID.
     if (stashed) {
         if (cloneAlive) {
             cloneAlive.id = origListId + '__dead';
@@ -1148,7 +1188,6 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
             : '';
         let hotspots = [];
 
-        // Если переданы хотспоты напрямую из редактора — используем их
         if (props._hotspotsOverride) {
             hotspots = FAR._jsonToPannellumHotspots({ hotSpots: props._hotspotsOverride }, basePath, url);
         } else {
@@ -1652,7 +1691,6 @@ FAR.WM._installViewerNavButtons = function (win, item, side) {
     const actions = titlebar.querySelector('.wm-title-actions');
     if (!actions) return;
 
-    // Кнопка "✏️ Редактор" — только для панорам, добавляем один раз
     if (win.appId === 'panorama' && !actions.querySelector('.wm-nav-edit')) {
         const editBtn = document.createElement('button');
         editBtn.className = 'wm-title-btn wm-nav-edit';
@@ -1665,7 +1703,6 @@ FAR.WM._installViewerNavButtons = function (win, item, side) {
         actions.insertBefore(editBtn, actions.firstChild);
     }
 
-    // Кнопки ◀ ▶ — навигация
     if (titlebar.querySelector('.wm-nav-prev')) return;
 
     const ctx = FAR.side[side];
@@ -2361,7 +2398,6 @@ FAR.WM._installOpenFileWrapper = function () {
                 }
             }
 
-            // Текстовые файлы — в Notepad++
             if (typeof FAR.isTextFile === 'function' && FAR.isTextFile(item)) {
                 return FAR.WM.openApp('texteditor', { props: { file: item, side: side } });
             }
