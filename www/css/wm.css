@@ -29,8 +29,6 @@
     linear-gradient(135deg, #0b1220 0%, #111a2e 100%);
     overflow: hidden;
 
-    /* Эти правила нужны, когда на фон ставится картинка
-       (модуль 48-wm-wallpaper.js выставляет style.backgroundImage). */
     background-size: cover;
     background-position: center center;
     background-repeat: no-repeat;
@@ -45,16 +43,10 @@
     background: transparent;
 }
 
-/* ВАЖНО: пустой контейнер 360-обоев НЕ должен перехватывать клики.
-   После закрытия сессии с 360-обоями контейнер остаётся в DOM
-   (innerHTML очищается, но сам элемент — нет). Без этого правила
-   он растянут на весь экран и блокирует клики по иконкам. */
 #wmWallpaper360:empty {
     pointer-events: none;
 }
 
-/* Pannellum внутри обоев: прозрачный фон, чтобы между
-   «началом загрузки» и «готово» был виден дефолтный градиент */
 #wmWallpaper360 .pnlm-container {
     background: transparent;
 }
@@ -126,8 +118,6 @@
     flex-direction: column;
     overflow: hidden;
     transition: box-shadow 0.12s, transform 0.08s;
-    /* Окна всегда должны быть кликабельными, даже если слой
-       #wmWindowsLayer имеет pointer-events: none */
     pointer-events: auto;
 }
 
@@ -243,71 +233,16 @@
     z-index: 5;
 }
 
-.wm-resize-n {
-    top: -3px;
-    left: 6px;
-    right: 6px;
-    height: 6px;
-    cursor: ns-resize;
-}
+.wm-resize-n { top: -3px; left: 6px; right: 6px; height: 6px; cursor: ns-resize; }
+.wm-resize-s { bottom: -3px; left: 6px; right: 6px; height: 6px; cursor: ns-resize; }
+.wm-resize-w { left: -3px; top: 6px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.wm-resize-e { right: -3px; top: 6px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.wm-resize-nw { left: -3px; top: -3px; width: 12px; height: 12px; cursor: nwse-resize; }
+.wm-resize-ne { right: -3px; top: -3px; width: 12px; height: 12px; cursor: nesw-resize; }
+.wm-resize-sw { left: -3px; bottom: -3px; width: 12px; height: 12px; cursor: nesw-resize; }
+.wm-resize-se { right: -3px; bottom: -3px; width: 14px; height: 14px; cursor: nwse-resize; }
 
-.wm-resize-s {
-    bottom: -3px;
-    left: 6px;
-    right: 6px;
-    height: 6px;
-    cursor: ns-resize;
-}
-
-.wm-resize-w {
-    left: -3px;
-    top: 6px;
-    bottom: 6px;
-    width: 6px;
-    cursor: ew-resize;
-}
-
-.wm-resize-e {
-    right: -3px;
-    top: 6px;
-    bottom: 6px;
-    width: 6px;
-    cursor: ew-resize;
-}
-
-.wm-resize-nw {
-    left: -3px;
-    top: -3px;
-    width: 12px;
-    height: 12px;
-    cursor: nwse-resize;
-}
-
-.wm-resize-ne {
-    right: -3px;
-    top: -3px;
-    width: 12px;
-    height: 12px;
-    cursor: nesw-resize;
-}
-
-.wm-resize-sw {
-    left: -3px;
-    bottom: -3px;
-    width: 12px;
-    height: 12px;
-    cursor: nesw-resize;
-}
-
-.wm-resize-se {
-    right: -3px;
-    bottom: -3px;
-    width: 14px;
-    height: 14px;
-    cursor: nwse-resize;
-}
-
-/* Превью снапа (полупрозрачный прямоугольник при таскании к краю) */
+/* Превью снапа */
 #wmSnapPreview {
     position: absolute;
     background: rgba(74, 163, 255, 0.25);
@@ -354,14 +289,8 @@
     scrollbar-width: thin;
 }
 
-#wmTaskButtons::-webkit-scrollbar {
-    height: 4px;
-}
-
-#wmTaskButtons::-webkit-scrollbar-thumb {
-    background: #2b2b3c;
-    border-radius: 2px;
-}
+#wmTaskButtons::-webkit-scrollbar { height: 4px; }
+#wmTaskButtons::-webkit-scrollbar-thumb { background: #2b2b3c; border-radius: 2px; }
 
 .wm-tb-btn {
     height: 40px;
@@ -383,9 +312,7 @@
     white-space: nowrap;
 }
 
-.wm-tb-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
+.wm-tb-btn:hover { background: rgba(255, 255, 255, 0.08); }
 
 .wm-tb-btn .wm-tb-label {
     font-size: 12px;
@@ -404,7 +331,6 @@
     background: rgba(74, 163, 255, 0.22);
 }
 
-/* Разделитель в панели задач */
 .wm-tb-sep {
     width: 1px;
     height: 28px;
@@ -413,9 +339,7 @@
     flex-shrink: 0;
 }
 
-.wm-tb-spacer {
-    flex: 1;
-}
+.wm-tb-spacer { flex: 1; }
 
 /* Трей */
 .wm-tray {
@@ -440,9 +364,7 @@
     cursor: pointer;
 }
 
-.wm-tray .wm-tray-item:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
+.wm-tray .wm-tray-item:hover { background: rgba(255, 255, 255, 0.08); }
 
 .wm-tray .wm-tray-clock {
     font-size: 12px;
@@ -459,7 +381,6 @@
     color: #a6adc8;
 }
 
-/* Кнопка Пуск */
 #wmStartBtn {
     background: transparent;
     border: none;
@@ -475,17 +396,10 @@
     flex-shrink: 0;
 }
 
-#wmStartBtn:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
-
-#wmStartBtn.open {
-    background: rgba(74, 163, 255, 0.25);
-}
+#wmStartBtn:hover { background: rgba(255, 255, 255, 0.08); }
+#wmStartBtn.open { background: rgba(74, 163, 255, 0.25); }
 
 /* ==== Меню Пуск ==== */
-/* ИЗМЕНЕНО: ширина 360px (было 520px) — для одной колонки
-   шире не нужно, иначе элементы растянутся на всю ширину. */
 #wmStartMenu {
     position: absolute;
     left: 8px;
@@ -504,19 +418,11 @@
     animation: wmStartIn 0.14s ease-out;
 }
 
-#wmStartMenu.open {
-    display: flex;
-}
+#wmStartMenu.open { display: flex; }
 
 @keyframes wmStartIn {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .wm-start-search {
@@ -535,9 +441,7 @@
     outline: none;
 }
 
-.wm-start-search input:focus {
-    border-color: #4aa3ff;
-}
+.wm-start-search input:focus { border-color: #4aa3ff; }
 
 .wm-start-list {
     flex: 1;
@@ -549,8 +453,6 @@
     align-content: start;
 }
 
-/* ИЗМЕНЕНО: горизонтальная раскладка — [иконка] [название]
-   (было: flex-direction: column; text-align: center; padding: 12px 6px). */
 .wm-start-item {
     display: flex;
     flex-direction: row;
@@ -565,11 +467,8 @@
     transition: background 0.12s;
 }
 
-.wm-start-item:hover {
-    background: rgba(74, 163, 255, 0.18);
-}
+.wm-start-item:hover { background: rgba(74, 163, 255, 0.18); }
 
-/* ИЗМЕНЕНО: иконка меньше (было 28px) — под горизонтальный вид. */
 .wm-start-item .wm-si-emoji {
     font-size: 22px;
     flex-shrink: 0;
@@ -577,9 +476,6 @@
     filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
-/* ИЗМЕНЕНО: название в одну строку с обрезкой многоточием
-   (было: word-break: break-word; max-width: 100%).
-   Полное название доступно в tooltip — JS уже выставляет item.title. */
 .wm-start-item .wm-si-label {
     flex: 1;
     min-width: 0;
@@ -612,9 +508,7 @@
     gap: 6px;
 }
 
-.wm-start-footer button:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
+.wm-start-footer button:hover { background: rgba(255, 255, 255, 0.08); }
 
 /* ==== Контекстное меню рабочего стола ==== */
 #wmContextMenu {
@@ -628,11 +522,14 @@
     display: none;
     padding: 6px;
     font-size: 12px;
+
+    /* Ограничиваем размеры для мобильных устройств */
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+    max-width: calc(100vw - 16px);
 }
 
-#wmContextMenu.open {
-    display: block;
-}
+#wmContextMenu.open { display: block; }
 
 .wm-ctx-item {
     padding: 7px 12px;
@@ -643,9 +540,7 @@
     gap: 10px;
 }
 
-.wm-ctx-item:hover {
-    background: rgba(74, 163, 255, 0.2);
-}
+.wm-ctx-item:hover { background: rgba(74, 163, 255, 0.2); }
 
 .wm-ctx-item.disabled {
     color: #6c7086;
@@ -679,13 +574,11 @@
     gap: 8px;
 }
 
-/* ==== Модальный диалог поверх окна (для J1) ==== */
 .wm-window.modal-locked {
     pointer-events: none;
     filter: brightness(0.75);
 }
 
-/* ==== Диалог выбора файла из БД (внутри окна WM) ==== */
 .wm-file-dialog .wm-body {
     display: flex;
     flex-direction: row;
@@ -737,9 +630,7 @@
     cursor: pointer;
 }
 
-.wm-fd-item:hover {
-    background: #232333;
-}
+.wm-fd-item:hover { background: #232333; }
 
 .wm-fd-item.focused {
     background: #2b3a52;
@@ -747,9 +638,7 @@
     outline-offset: -1px;
 }
 
-.wm-fd-item.selected {
-    background: #2b3a52;
-}
+.wm-fd-item.selected { background: #2b3a52; }
 
 .wm-fd-item .wm-fd-name {
     flex: 1;
@@ -808,7 +697,6 @@
     margin-left: 6px;
 }
 
-/* Классы-подсветки для drag&drop между окнами Проводника */
 .wm-window.wm-drop-target-candidate {
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65),
     0 0 0 2px rgba(74, 163, 255, 0.35) inset;
@@ -820,7 +708,6 @@
     background: rgba(166, 227, 161, 0.06);
 }
 
-/* Призрак перетаскивания */
 .wm-drag-ghost {
     font-family: 'Segoe UI', Arial, sans-serif;
     white-space: nowrap;
@@ -841,31 +728,11 @@
     cursor: not-allowed;
 }
 
-/* Скроллбары в тёмном стиле */
-#wmRoot ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-}
+#wmRoot ::-webkit-scrollbar { width: 10px; height: 10px; }
+#wmRoot ::-webkit-scrollbar-track { background: #12121c; }
+#wmRoot ::-webkit-scrollbar-thumb { background: #2b2b3c; border-radius: 5px; }
+#wmRoot ::-webkit-scrollbar-thumb:hover { background: #3a3a52; }
 
-#wmRoot ::-webkit-scrollbar-track {
-    background: #12121c;
-}
-
-#wmRoot ::-webkit-scrollbar-thumb {
-    background: #2b2b3c;
-    border-radius: 5px;
-}
-
-#wmRoot ::-webkit-scrollbar-thumb:hover {
-    background: #3a3a52;
-}
-
-/* ============================================================
-   DEFENSIVE: слой окон не участвует во flex-раскладке
-   и не блокирует клики по иконкам, когда в нём нет окон.
-   Окна внутри слоя остаются кликабельными благодаря
-   pointer-events: auto на .wm-window (см. выше).
-   ============================================================ */
 #wmWindowsLayer {
     position: absolute;
     inset: 0;
@@ -951,14 +818,8 @@
 }
 
 @keyframes wmSubmenuIn {
-    from {
-        opacity: 0;
-        transform: translateX(-4px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
 }
 
 .wm-start-submenu-title {

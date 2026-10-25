@@ -34,6 +34,8 @@ FAR.openContextMenu = function (x, y, side, index, item) {
     let top = y;
     if (left + rect.width > vw - 4) left = vw - rect.width - 4;
     if (top + rect.height > vh - 4) top = vh - rect.height - 4;
+
+    // Защита от выхода за верхний/левый край, если меню слишком большое
     if (left < 4) left = 4;
     if (top < 4) top = 4;
 
@@ -144,12 +146,12 @@ FAR._ctxRenderMenu = function () {
             if (isFolder) {
                 FAR.handleItemDblClick(side, index);
             } else {
-                FAR.openFile(item, side, index);   // ← БЫЛО: FAR.openFile(item);
+                FAR.openFile(item, side, index);
             }
         }
     });
 
-// Открыть в новом окне — только для файла
+    // Открыть в новом окне — только для файла
     entries.push({
         label: 'Открыть в новом окне',
         icon: '🪟',
@@ -158,6 +160,7 @@ FAR._ctxRenderMenu = function () {
             FAR.openFileInNewWindow(item, side);
         }
     });
+
     // Открыть в браузере — для HTML-файлов
     entries.push({
         label: 'Открыть в браузере',
@@ -289,8 +292,6 @@ FAR._ctxRenderMenu = function () {
  * Внутренняя функция — вешается в setupPanelContextMenu.
  */
 FAR._onPanelItemContextMenu = function (event, side) {
-    // Не мешаем браузерному меню при Ctrl (удобно для «открыть в новой вкладке» и т.п.)
-    // Хочешь — убери эту проверку.
     if (event.ctrlKey || event.metaKey) return;
 
     event.preventDefault();
@@ -298,7 +299,6 @@ FAR._onPanelItemContextMenu = function (event, side) {
 
     const itemEl = event.target.closest('.file-item');
     if (!itemEl) {
-        // Клик по пустому месту панели — открываем меню без элемента.
         FAR.setActivePanel(side);
         FAR.openContextMenu(event.clientX, event.clientY, side, null, null);
         return;
@@ -308,7 +308,6 @@ FAR._onPanelItemContextMenu = function (event, side) {
     const index = idxAttr === null ? null : parseInt(idxAttr, 10);
 
     if (index === -1) {
-        // Псевдоэлемент ".."
         FAR.setActivePanel(side);
         FAR.openContextMenu(event.clientX, event.clientY, side, -1, {
             isFolder: true, name: '..', path: ''
@@ -316,14 +315,12 @@ FAR._onPanelItemContextMenu = function (event, side) {
         return;
     }
 
-    // Обычный файл/папка
     const items = side === 'left' ? FAR.leftFiles : FAR.rightFiles;
     if (index === null || index < 0 || index >= items.length) return;
     const item = items[index];
 
     FAR.setActivePanel(side);
 
-    // Если элемент не выделен — выделяем только его (как в Explorer)
     const selSet = side === 'left' ? FAR.leftSelectedIdx : FAR.rightSelectedIdx;
     if (!selSet.has(index)) {
         selSet.clear();

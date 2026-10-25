@@ -12,6 +12,11 @@
     color: #cdd6f4;
     user-select: none;
     animation: ctxFadeIn 0.12s ease-out;
+
+    /* Ограничиваем размеры для мобильных устройств */
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+    max-width: calc(100vw - 16px);
 }
 
 .ctx-menu.hidden { display: none; }

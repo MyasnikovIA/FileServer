@@ -19,10 +19,7 @@ FAR.WM.DESKTOP_DEFAULT = [
     { id: 'browser',    x: 240, y: 130 }
 ];
 
-// Условные приложения — появляются, ТОЛЬКО если
-// соответствующее приложение зарегистрировано (Console — когда
-// info.console=true на сервере, VideoChat — когда videoChatEnabled
-// и т.д.).
+// Условные приложения
 FAR.WM.DESKTOP_CONDITIONAL = [
     { id: 'console',     x: 240, y: 240 },
     { id: 'videochat',   x: 240, y: 350 },
@@ -80,18 +77,15 @@ FAR.WM._renderDesktopIcons = function () {
     let changed = false;
 
     if (!layout) {
-        // Первый запуск — только дефолтный набор.
         layout = FAR.WM.DESKTOP_DEFAULT.slice();
         changed = true;
     } else {
-        // 1) Убираем скрытые и некорректные записи
         const filtered = layout.filter(function (entry) {
             return entry && entry.id && !HIDDEN_ON_DESKTOP[entry.id];
         });
         if (filtered.length !== layout.length) changed = true;
         layout = filtered;
 
-        // 2) Добавляем недостающие приложения из DESKTOP_DEFAULT
         const existingIds = new Set(layout.map(function (e) { return e.id; }));
         FAR.WM.DESKTOP_DEFAULT.forEach(function (def) {
             if (HIDDEN_ON_DESKTOP[def.id]) return;
@@ -102,10 +96,6 @@ FAR.WM._renderDesktopIcons = function () {
         });
     }
 
-    // 3) ВАЖНО: условные приложения (console, videochat, broadcaster)
-    //    добавляем в ОБОИХ ветках — и для свежего layout, и для
-    //    сохранённого. Именно этот блок раньше не вызывался для
-    //    свежего layout, из-за чего Console пропадала после сброса.
     if (FAR.WM._ensureConditionalAppOnDesktop(layout)) {
         changed = true;
     }
@@ -307,9 +297,24 @@ FAR.WM._positionContextMenu = function (menu, x, y) {
     menu.style.left = x + 'px';
     menu.style.top  = y + 'px';
     menu.classList.add('open');
+
     const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth - 4) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
-    if (rect.bottom > window.innerHeight - 4) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = x;
+    let top = y;
+
+    // Сдвигаем, если вылезает за правый/нижний край
+    if (left + rect.width > vw - 4) left = vw - rect.width - 4;
+    if (top + rect.height > vh - 4) top = vh - rect.height - 4;
+
+    // Защита от выхода за верхний/левый край (актуально для длинных меню, у которых сработал max-height)
+    if (left < 4) left = 4;
+    if (top < 4) top = 4;
+
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
 };
 
 FAR.WM._hideContextMenu = function () {
