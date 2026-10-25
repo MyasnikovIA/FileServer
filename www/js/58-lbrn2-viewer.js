@@ -28,7 +28,6 @@ FAR.openLbrn2Viewer = async function (item, side) {
 
     try { FAR.closeViewer(); } catch (e) {}
     try { FAR.closePanoramaViewer(); } catch (e) {}
-    // ... (закрытие других модалок по необходимости)
 
     FAR.Lbrn2._currentItem = item;
     FAR.Lbrn2._currentSide = side;
@@ -462,14 +461,29 @@ FAR._createLbrn2Viewer = function (hostEl, item, side) {
 
         const tickLen = fontSize * 0.9;
         const labelOffset = fontSize * 1.4;
+
+        // Нижняя ось X
         for(let x = 0; x <= gridMaxX; x += GRID_STEP_MM){
             parts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${tickLen}" stroke="${AXIS}" stroke-width="${tickW}"/>`);
             parts.push(`<text x="${x}" y="${tickLen + labelOffset}" font-size="${fontSize}" text-anchor="middle" fill="${TEXT}" font-family="sans-serif">${x}</text>`);
         }
 
+        // Левая ось Y
         for(let y = GRID_STEP_MM; y <= gridMaxY; y += GRID_STEP_MM){
             parts.push(`<line x1="0" y1="${-y}" x2="${-tickLen}" y2="${-y}" stroke="${AXIS}" stroke-width="${tickW}"/>`);
             parts.push(`<text x="${-tickLen - fontSize * 0.4}" y="${-y + fontSize * 0.35}" font-size="${fontSize}" text-anchor="end" fill="${TEXT}" font-family="sans-serif">${y}</text>`);
+        }
+
+        // Верхняя ось X
+        for(let x = 0; x <= gridMaxX; x += GRID_STEP_MM){
+            parts.push(`<line x1="${x}" y1="${-gridMaxY}" x2="${x}" y2="${-gridMaxY - tickLen}" stroke="${AXIS}" stroke-width="${tickW}"/>`);
+            parts.push(`<text x="${x}" y="${-gridMaxY - tickLen - fontSize * 0.4}" font-size="${fontSize}" text-anchor="middle" fill="${TEXT}" font-family="sans-serif">${x}</text>`);
+        }
+
+        // Правая ось Y
+        for(let y = GRID_STEP_MM; y <= gridMaxY; y += GRID_STEP_MM){
+            parts.push(`<line x1="${gridMaxX}" y1="${-y}" x2="${gridMaxX + tickLen}" y2="${-y}" stroke="${AXIS}" stroke-width="${tickW}"/>`);
+            parts.push(`<text x="${gridMaxX + tickLen + fontSize * 0.4}" y="${-y + fontSize * 0.35}" font-size="${fontSize}" text-anchor="start" fill="${TEXT}" font-family="sans-serif">${y}</text>`);
         }
 
         parts.push(`<text x="${gridMaxX + fontSize * 0.5}" y="${-fontSize * 0.35}" font-size="${fontSize}" text-anchor="start" fill="${TEXT}" font-family="sans-serif" font-weight="bold">X, mm</text>`);
@@ -501,7 +515,6 @@ FAR._createLbrn2Viewer = function (hostEl, item, side) {
         '  <div class="lbrn2-statusbar" data-role="statusbar" style="display:none"></div>' +
         '</div>';
 
-    // Нужно обернуть в контейнер, чтобы они были рядом
     const wrapper = document.createElement('div');
     wrapper.style.display = 'flex';
     wrapper.style.flex = '1';
@@ -773,7 +786,6 @@ FAR._registerLbrn2WmApp = function () {
 
             const api = FAR._createLbrn2Viewer(win.bodyEl, item, side);
 
-            // Добавляем кнопку скачивания в заголовок окна
             const titlebar = win.el.querySelector('.wm-titlebar');
             const actions = titlebar.querySelector('.wm-title-actions');
             if (actions && !actions.querySelector('.wm-nav-download')) {

@@ -294,14 +294,29 @@ FAR._createGcodeViewer = function (hostEl, item, side) {
             const tickLen = FONT_SIZE * 0.9;
             const labelOffset = FONT_SIZE * 1.4;
 
+            // Нижняя ось X
             for (let x = 0; x <= gridMaxX; x += GRID_STEP) {
                 gridParts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${tickLen}" stroke="${AXIS}" stroke-width="0.1"/>`);
                 gridParts.push(`<text x="${x}" y="${tickLen + labelOffset}" font-size="${FONT_SIZE}" text-anchor="middle" fill="${TEXT}" font-family="sans-serif">${x}</text>`);
             }
+            // Левая ось Y
             for (let y = GRID_STEP; y <= gridMaxY; y += GRID_STEP) {
                 gridParts.push(`<line x1="0" y1="${-y}" x2="${-tickLen}" y2="${-y}" stroke="${AXIS}" stroke-width="0.1"/>`);
                 gridParts.push(`<text x="${-tickLen - FONT_SIZE * 0.4}" y="${-y + FONT_SIZE * 0.35}" font-size="${FONT_SIZE}" text-anchor="end" fill="${TEXT}" font-family="sans-serif">${y}</text>`);
             }
+
+            // Верхняя ось X
+            for (let x = 0; x <= gridMaxX; x += GRID_STEP) {
+                gridParts.push(`<line x1="${x}" y1="${-gridMaxY}" x2="${x}" y2="${-gridMaxY - tickLen}" stroke="${AXIS}" stroke-width="0.1"/>`);
+                gridParts.push(`<text x="${x}" y="${-gridMaxY - tickLen - FONT_SIZE * 0.4}" font-size="${FONT_SIZE}" text-anchor="middle" fill="${TEXT}" font-family="sans-serif">${x}</text>`);
+            }
+
+            // Правая ось Y
+            for (let y = GRID_STEP; y <= gridMaxY; y += GRID_STEP) {
+                gridParts.push(`<line x1="${gridMaxX}" y1="${-y}" x2="${gridMaxX + tickLen}" y2="${-y}" stroke="${AXIS}" stroke-width="0.1"/>`);
+                gridParts.push(`<text x="${gridMaxX + tickLen + FONT_SIZE * 0.4}" y="${-y + FONT_SIZE * 0.35}" font-size="${FONT_SIZE}" text-anchor="start" fill="${TEXT}" font-family="sans-serif">${y}</text>`);
+            }
+
             gridParts.push(`<text x="${gridMaxX + FONT_SIZE * 0.5}" y="${-FONT_SIZE * 0.35}" font-size="${FONT_SIZE}" text-anchor="start" fill="${TEXT}" font-family="sans-serif" font-weight="bold">X, mm</text>`);
             gridParts.push(`<text x="${-FONT_SIZE * 0.4}" y="${-gridMaxY - FONT_SIZE * 0.4}" font-size="${FONT_SIZE}" text-anchor="start" fill="${TEXT}" font-family="sans-serif" font-weight="bold">Y, mm</text>`);
 
