@@ -43,6 +43,12 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         loadingEl.style.display = 'none';
         FAR.setStatus('🕹️ JSDOS: ' + item.name);
         try { root.setAttribute('tabindex', '0'); root.focus(); const canvas = root.querySelector('canvas'); if (canvas) { canvas.setAttribute('tabindex', '0'); canvas.focus(); } } catch (e) {}
+
+        // Инициализация виртуального джойстика
+        if (typeof FAR.VirtualGamepad !== 'undefined') {
+            FAR.VirtualGamepad.mount(root, 'jsdos');
+        }
+
         FAR.WM._installViewerNavButtons(win, item, side);
     } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }
 };
@@ -90,6 +96,12 @@ FAR.WM._mountNesViewer = async function (win, props) {
         setTimeout(() => { try { browser.fitInParent(); } catch (e) {} }, 400);
         loadingEl.style.display = 'none';
         FAR.setStatus('🎮 NES: ' + item.name);
+
+        // Инициализация виртуального джойстика
+        if (typeof FAR.VirtualGamepad !== 'undefined') {
+            FAR.VirtualGamepad.mount(root, 'nes');
+        }
+
         FAR.WM._installViewerNavButtons(win, item, side);
     } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }
 };
@@ -169,7 +181,14 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
             system: core, color: '#89b4fa', startOnLoad: true
         });
         win.props._emulatorInstance = emu;
-        setTimeout(() => { if (loadingEl) loadingEl.style.display = 'none'; }, 3000);
+        setTimeout(() => {
+            if (loadingEl) loadingEl.style.display = 'none';
+
+            // Инициализация виртуального джойстика после загрузки
+            if (typeof FAR.VirtualGamepad !== 'undefined') {
+                FAR.VirtualGamepad.mount(root, 'emulator');
+            }
+        }, 3000);
         FAR.setStatus('🕹️ EmulatorJS: ' + item.name + ' (' + core + ')');
         FAR.WM._installViewerNavButtons(win, item, side);
     } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }

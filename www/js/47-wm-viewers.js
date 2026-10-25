@@ -14,10 +14,6 @@
 //   • _mountPdfViewer(win, props)     — PDF (PDFObject)
 //   • _mountVideoViewer(win, props)   — видео
 //   • _mountBrowserViewer(win, props) — встроенный браузер
-//
-// ВАЖНО: файл должен существовать и быть корректным JS.
-// Если сервер возвращает «Not found» вместо содержимого —
-// браузер выдаст SyntaxError «Unexpected identifier 'not'».
 // ============================================================
 
 // ------------------------------------------------------------
@@ -41,12 +37,22 @@ FAR.WM._trackBlobUrl = function (win, url) {
  *  • останавливает JSDOS / NES / EmulatorJS;
  *  • уничтожает Pannellum-вьюер;
  *  • уничтожает API встроенного браузера.
+ *  • удаляет виртуальный джойстик.
  *
  * Вызывается из onClose приложений viewer/panorama/pdf/video/
  * jsdos/nes/emulator/mp3.
  */
 FAR.WM._finalizeViewer = function (win) {
     if (!win || !win.props) return;
+
+    // Уничтожаем виртуальный джойстик, если он есть
+    if (typeof FAR.VirtualGamepad !== 'undefined') {
+        if (win.bodyEl) {
+            const rootNodes = win.bodyEl.querySelectorAll('[data-role="root"]');
+            rootNodes.forEach(node => FAR.VirtualGamepad.unmount(node));
+            FAR.VirtualGamepad.unmount(win.bodyEl);
+        }
+    }
 
     // JSDOS
     if (win.props._jsdosInstance) {
