@@ -34,6 +34,7 @@
     <link rel="stylesheet" href="css/video-viewer.css">
     <link rel="stylesheet" href="css/videochat-viewer.css">
     <link rel="stylesheet" href="css/videochat-broadcaster.css">
+    <link rel="stylesheet" href="css/gpu-monitor.css">
     <link rel="stylesheet" href="css/ollama.css">
     <link rel="stylesheet" href="css/lbrn2-viewer.css">
     <link rel="stylesheet" href="css/gcode-viewer.css">
@@ -52,24 +53,18 @@
     <button onclick="FAR.refreshFiles()" class="btn-warning" id="btnRefresh" disabled>🔄 Обновить</button>
     <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру" disabled>🔍 Debug</button>
     <button onclick="FAR.openGamepadSetup()" id="btnGamepad" title="Настроить джойстик">🎮 Джойстик</button>
+    <button onclick="FAR.openGpuMonitor()" id="btnGpu" title="Мониторинг видеокарт (nvidia-smi)">🎮 GPU</button>
     <button onclick="FAR.openOllama()" id="btnOllama" title="Ollama Chat (локальная LLM)">🦙 Ollama</button>
-    <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)"
-            style="display:none;">🖥️ Консоль
-    </button>
-    <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺
-        Трансляция
-    </button>
-    <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">
-        🎥 Вещать
-    </button>
+    <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)" style="display:none;">🖥️ Консоль</button>
+    <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺 Трансляция</button>
+    <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">🎥 Вещать</button>
     <button onclick="FAR.onAuthButton()" class="btn-auth" id="btnAuth" title="Войти / Выйти">🔐 LogIn</button>
     <button onclick="FAR.WM.toggle()" id="btnWM" title="Оконный режим">🖥 Рабочий стол</button>
     <button onclick="FAR.gamepadModeCycle()"
             oncontextmenu="event.preventDefault(); FAR.openGamepadSetup();"
             class="gp-mode-indicator gp-mode-files"
             id="gpModeIndicator"
-            title="ЛКМ — переключить режим, ПКМ — настройка">🎮 Файлы
-    </button>
+            title="ЛКМ — переключить режим, ПКМ — настройка">🎮 Файлы</button>
     <span style="color:#a6adc8;font-size:12px;margin-left:auto;" id="statusText">Инициализация…</span>
 </div>
 
@@ -78,9 +73,7 @@
         <div class="panel-header">
             <span class="path" id="pathLeft">/</span>
             <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')"
-                        title="Сменить сервер для левой панели">🗄️
-                </button>
+                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')" title="Сменить сервер для левой панели">🗄️</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '..')">⬆</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '/')">🏠</button>
             </div>
@@ -96,9 +89,7 @@
         <div class="panel-header">
             <span class="path" id="pathRight">/</span>
             <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')"
-                        title="Сменить сервер для правой панели">🗄️
-                </button>
+                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')" title="Сменить сервер для правой панели">🗄️</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '..')">⬆</button>
                 <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '/')">🏠</button>
             </div>
@@ -180,7 +171,12 @@
 <script src="js/42-wm-startmenu.js"></script>
 <script src="js/43-wm-desktop.js"></script>
 <script src="js/44-wm-apps.js"></script>
-<script src="js/45-wm-bridge.js"></script>
+<script src="js/45-wm-dragdrop.js"></script>
+<script src="js/46-wm-explorer.js"></script>
+<script src="js/47-wm-viewers.js"></script>
+<script src="js/48-wm-viewers-emu.js"></script>
+<script src="js/49-wm-dialogs.js"></script>
+<script src="js/50-wm-misc.js"></script>
 <script src="js/46-wm-mp3-viewer.js"></script>
 <script src="js/47-fullscreen.js"></script>
 <script src="js/48-wm-wallpaper.js"></script>
@@ -190,6 +186,7 @@
 <script src="js/53-videochat-broadcaster.js"></script>
 <script src="js/54-wm-panorama-editor.js"></script>
 <script src="js/55-wm-text-editor.js"></script>
+<script src="js/56-gpu-monitor.js"></script>
 <script src="js/57-ollama.js"></script>
 <script src="js/58-lbrn2-viewer.js"></script>
 <script src="js/59-gcode-viewer.js"></script>
