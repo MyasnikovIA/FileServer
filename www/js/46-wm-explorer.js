@@ -455,6 +455,28 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const isHtml = isFile && typeof FAR.isHtmlFile === 'function' && FAR.isHtmlFile(selectedItem);
     const isText = isFile && typeof FAR.isTextFile === 'function' && FAR.isTextFile(selectedItem);
 
+    // ============================================================
+    // «Открыть» (эмуляция Enter) — работает и на файлах, и на папках.
+    // Необходимо для мобильных устройств, где нет физической клавиши Enter.
+    // Берёт текущий курсор, а если ничего не выделено — открывает
+    // родительский каталог (эквивалент Enter на «..»).
+    // ============================================================
+    add('📂 Открыть', hasDb, withSide(function () {
+        const c = FAR.side[side];
+        if (!c) return;
+        let idx = -1;
+        if (c.selectedIdx && c.selectedIdx.size > 0) {
+            idx = Array.from(c.selectedIdx).sort((a, b) => a - b)[0];
+        } else {
+            idx = c.cursor;
+        }
+        if (idx === -1) {
+            FAR.goToParent(side);
+        } else if (idx >= 0 && idx < (c.files || []).length) {
+            FAR.handleItemDblClick(side, idx);
+        }
+    }));
+
     add('📤 Загрузить',     hasDb, withSide(function () { FAR.uploadFile(); }));
     add('📁 Создать папку', hasDb, withSide(function () { FAR.createFolder(); }));
     add('📝 Редактировать (Notepad++)', hasDb && isText, withSide(function () {

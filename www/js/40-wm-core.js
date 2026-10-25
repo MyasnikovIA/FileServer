@@ -95,8 +95,20 @@ FAR.WM.openWindow = function (opts) {
     const layer = document.getElementById('wmWindowsLayer') || desktop;
     const rect = FAR.WM._getDesktopRect();
 
-    const w = opts.width  || Math.min(1000, rect.width  - 80);
-    const h = opts.height || Math.min(680,  rect.height - 80);
+    // ============================================================
+    // Клампим размеры окна к размеру вьюпорта — чтобы окно,
+    // сохранённое на большом экране, не вылезало за границы
+    // маленького (мобильного) экрана.
+    // ============================================================
+    const maxW = Math.max(280, rect.width  - 40);
+    const maxH = Math.max(160, rect.height - 40);
+
+    let w = opts.width  || Math.min(1000, maxW);
+    let h = opts.height || Math.min(680,  maxH);
+    if (w > maxW) w = maxW;
+    if (h > maxH) h = maxH;
+    if (w < 100) w = 100;
+    if (h <  80) h =  80;
 
     let x = opts.x, y = opts.y;
     if (x === undefined || y === undefined) {
@@ -104,6 +116,12 @@ FAR.WM.openWindow = function (opts) {
         x = Math.max(20, Math.round((rect.width  - w) / 2) - 80 + offset);
         y = Math.max(20, Math.round((rect.height - h) / 2) - 60 + offset);
     }
+
+    // Клампим позицию: заголовок окна должен быть в пределах вьюпорта
+    if (x + w > rect.width)  x = Math.max(0, rect.width  - w);
+    if (y + h > rect.height) y = Math.max(0, rect.height - h);
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
 
     const el = document.createElement('div');
     el.className = 'wm-window';
@@ -161,9 +179,24 @@ FAR.WM.openWindow = function (opts) {
         if (e.target.closest('.wm-title-btn')) return;
         FAR.WM._startDrag(e, id);
     });
+
+    // ============================================================
+    // Двойной клик по заголовку → развернуть/восстановить.
+    // Эмулируем клик по кнопке .wm-btn-max, чтобы срабатывало
+    // ровно то же событие, что и при явном нажатии кнопки
+    // (см. требование: «срабатывает событие кнопки wm-btn-max»).
+    // ============================================================
     titlebar.addEventListener('dblclick', function (e) {
         if (e.target.closest('.wm-title-btn')) return;
-        FAR.WM.toggleMaximize(id);
+        e.preventDefault();
+        e.stopPropagation();
+
+        const maxBtn = el.querySelector('.wm-btn-max');
+        if (maxBtn) {
+            maxBtn.click();
+        } else {
+            FAR.WM.toggleMaximize(id);
+        }
     });
 
     el.querySelectorAll('.wm-resize').forEach(function (handle) {
@@ -503,6 +536,10 @@ FAR.WM._bindGlobalEvents = function () {
         }
     }, true);
 
+    // ============================================================
+    // Resize вьюпорта: пересчитываем maximized/snapped окна
+    // И клампим обычные окна, чтобы они не вылезали за экран.
+    // ============================================================
     window.addEventListener('resize', function () {
         if (!FAR.WM.state.active) return;
         const rect = FAR.WM._getDesktopRect();
@@ -513,6 +550,20 @@ FAR.WM._bindGlobalEvents = function () {
                 FAR.WM.snapWindow(w.id, 'left');
             } else if (w.snap === 'right') {
                 FAR.WM.snapWindow(w.id, 'right');
+            } else {
+                // Клампим обычные окна к новому размеру вьюпорта
+                let nx = w.x, ny = w.y, nw = w.w, nh = w.h;
+                const maxW = Math.max(280, rect.width  - 20);
+                const maxH = Math.max(160, rect.height - 20);
+                if (nw > maxW) nw = maxW;
+                if (nh > maxH) nh = maxH;
+                if (nx + nw > rect.width)  nx = Math.max(0, rect.width  - nw);
+                if (ny + nh > rect.height) ny = Math.max(0, rect.height - nh);
+                if (nx < 0) nx = 0;
+                if (ny < 0) ny = 0;
+                if (nx !== w.x || ny !== w.y || nw !== w.w || nh !== w.h) {
+                    FAR.WM._applyRect(w, { x: nx, y: ny, w: nw, h: nh });
+                }
             }
         });
     });
