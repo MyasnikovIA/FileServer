@@ -114,7 +114,6 @@ FAR._createGcodeViewer = function (hostEl, item, side) {
     };
 
     let svgEl = null, baseViewBox = null, currentViewBox = null;
-    let fileName = item.name;
 
     function setViewBox(vb){
         currentViewBox = { ...vb };
@@ -246,24 +245,74 @@ FAR._createGcodeViewer = function (hostEl, item, side) {
 
             if (minX === Infinity) throw new Error("В файле не найдено команд движения (G0/G1)");
 
-            // Добавляем отступы
-            const pad = Math.max(10, (maxX - minX) * 0.05);
-            minX -= pad; minY -= pad;
-            maxX += pad; maxY += pad;
+            // ИСПРАВЛЕНИЕ: Сдвигаем только если есть отрицательные координаты
+            const offsetX = minX < 0 ? -minX : 0;
+            const offsetY = minY < 0 ? -minY : 0;
 
-            // SVG Y-координаты инвертированы, поэтому maxY и minY меняются местами
-            const svgMinY = -maxY;
-            const svgMaxY = -minY;
+            // Координаты после сдвига
+            const finalMaxX = maxX + offsetX;
+            const finalMaxY = maxY + offsetY;
 
-            const w = Math.max(1, maxX - minX);
-            const h = Math.max(1, svgMaxY - svgMinY);
+            // Границы сетки (кратны 10, плюс отступ от края)
+            const GRID_STEP = 10;
+            const GRID_PAD = 10;
+            const gridMaxX = Math.max(GRID_STEP, Math.ceil((finalMaxX + GRID_PAD) / GRID_STEP) * GRID_STEP);
+            const gridMaxY = Math.max(GRID_STEP, Math.ceil((finalMaxY + GRID_PAD) / GRID_STEP) * GRID_STEP);
 
-            baseViewBox = { x: minX, y: svgMinY, w: w, h: h };
+            const FONT_SIZE = 5;
+            const PAD = 15;
 
-            const displaySvgText = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${r6(minX)} ${r6(svgMinY)} ${r6(w)} ${r6(h)}" preserveAspectRatio="xMidYMid meet">
-                <g fill="none">
-                    <path d="${travelPath}" stroke="#888888" stroke-width="0.5" stroke-dasharray="2 2" />
-                    <path d="${cutPath}" stroke="#4a8cff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+            baseViewBox = {
+                x: -PAD,
+                y: -(gridMaxY + PAD),
+                w: gridMaxX + PAD * 2,
+                h: gridMaxY + PAD * 2
+            };
+
+            // Генерация сетки
+            const MINOR = "#dcdcdc";
+            const AXIS = "#444444";
+            const TEXT = "#222222";
+            const gridParts = [];
+
+            for (let x = GRID_STEP; x <= gridMaxX; x += GRID_STEP) {
+                gridParts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${-gridMaxY}" stroke="${MINOR}" stroke-width="0.06"/>`);
+            }
+            for (let y = GRID_STEP; y <= gridMaxY; y += GRID_STEP) {
+                gridParts.push(`<line x1="0" y1="${-y}" x2="${gridMaxX}" y2="${-y}" stroke="${MINOR}" stroke-width="0.06"/>`);
+            }
+
+            gridParts.push(`<line x1="0" y1="0" x2="${gridMaxX}" y2="0" stroke="${AXIS}" stroke-width="0.18"/>`);
+            gridParts.push(`<line x1="0" y1="0" x2="0" y2="${-gridMaxY}" stroke="${AXIS}" stroke-width="0.18"/>`);
+
+            // Стрелки
+            const arrow = FONT_SIZE * 0.55;
+            gridParts.push(`<polygon points="${gridMaxX},0 ${gridMaxX - arrow},${-arrow * 0.45} ${gridMaxX - arrow},${arrow * 0.45}" fill="${AXIS}"/>`);
+            gridParts.push(`<polygon points="0,${-gridMaxY} ${-arrow * 0.45},${-gridMaxY + arrow} ${arrow * 0.45},${-gridMaxY + arrow}" fill="${AXIS}"/>`);
+
+            // Тики и подписи
+            const tickLen = FONT_SIZE * 0.9;
+            const labelOffset = FONT_SIZE * 1.4;
+
+            for (let x = 0; x <= gridMaxX; x += GRID_STEP) {
+                gridParts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${tickLen}" stroke="${AXIS}" stroke-width="0.1"/>`);
+                gridParts.push(`<text x="${x}" y="${tickLen + labelOffset}" font-size="${FONT_SIZE}" text-anchor="middle" fill="${TEXT}" font-family="sans-serif">${x}</text>`);
+            }
+            for (let y = GRID_STEP; y <= gridMaxY; y += GRID_STEP) {
+                gridParts.push(`<line x1="0" y1="${-y}" x2="${-tickLen}" y2="${-y}" stroke="${AXIS}" stroke-width="0.1"/>`);
+                gridParts.push(`<text x="${-tickLen - FONT_SIZE * 0.4}" y="${-y + FONT_SIZE * 0.35}" font-size="${FONT_SIZE}" text-anchor="end" fill="${TEXT}" font-family="sans-serif">${y}</text>`);
+            }
+            gridParts.push(`<text x="${gridMaxX + FONT_SIZE * 0.5}" y="${-FONT_SIZE * 0.35}" font-size="${FONT_SIZE}" text-anchor="start" fill="${TEXT}" font-family="sans-serif" font-weight="bold">X, mm</text>`);
+            gridParts.push(`<text x="${-FONT_SIZE * 0.4}" y="${-gridMaxY - FONT_SIZE * 0.4}" font-size="${FONT_SIZE}" text-anchor="start" fill="${TEXT}" font-family="sans-serif" font-weight="bold">Y, mm</text>`);
+
+            const gridSvg = gridParts.join('');
+
+            const displaySvgText = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${r6(baseViewBox.x)} ${r6(baseViewBox.y)} ${r6(baseViewBox.w)} ${r6(baseViewBox.h)}" preserveAspectRatio="xMidYMid meet">
+                <rect x="${r6(baseViewBox.x)}" y="${r6(baseViewBox.y)}" width="${r6(baseViewBox.w)}" height="${r6(baseViewBox.h)}" fill="#ffffff"/>
+                <g id="grid-layer">${gridSvg}</g>
+                <g transform="translate(${r6(offsetX)}, ${r6(-offsetY)})" fill="none">
+                    <path d="${travelPath}" stroke="#888888" stroke-width="0.1" stroke-dasharray="2 2" />
+                    <path d="${cutPath}" stroke="#4a8cff" stroke-width="0.15" stroke-linecap="round" stroke-linejoin="round" />
                 </g>
             </svg>`;
 
