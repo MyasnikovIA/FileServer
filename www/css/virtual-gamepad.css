@@ -13,10 +13,11 @@
     -webkit-user-select: none;
 }
 
+/* Кнопка вызова джойстика сдвинута левее, чтобы не мешать меню EmulatorJS */
 .vg-toggle-btn {
     position: absolute;
     top: 10px;
-    right: 10px;
+    right: 70px;
     width: 44px;
     height: 44px;
     border-radius: 50%;
@@ -93,13 +94,13 @@
 }
 
 /* ============================================================
-   Action Кнопки (A, B, X, Y)
+   Action Кнопки (A, B, X, Y, C, Z)
    ============================================================ */
 .vg-actions {
     position: absolute;
     bottom: 20px;
     right: 20px;
-    width: 150px;
+    width: 180px;
     height: 150px;
     pointer-events: auto;
 }
@@ -115,7 +116,7 @@
     align-items: center;
     justify-content: center;
     color: rgba(255, 255, 255, 0.8);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: bold;
     cursor: pointer;
     user-select: none;
@@ -130,12 +131,59 @@
     color: #fff;
 }
 
-/* Расположение как на геймпаде */
-.vg-btn-y { top: 48px; left: 0; }
-.vg-btn-x { top: 48px; right: 0; }
-.vg-btn-b { bottom: 0; left: 48px; }
-.vg-btn-a { bottom: 0; right: 48px; background: rgba(249, 226, 175, 0.15); }
-.vg-btn-a.active { background: rgba(249, 226, 175, 0.7); }
+/* --- Раскладка для NES (2 кнопки) --- */
+.vg-layout-nes .vg-btn-a { bottom: 20px; right: 20px; }
+.vg-layout-nes .vg-btn-b { bottom: 20px; right: 90px; }
+
+/* --- Раскладка для SNES/PSX (4 кнопки ромбом) --- */
+.vg-layout-snes .vg-btn-y { top: 10px; left: 20px; }
+.vg-layout-snes .vg-btn-x { top: 10px; right: 20px; }
+.vg-layout-snes .vg-btn-b { bottom: 10px; left: 20px; }
+.vg-layout-snes .vg-btn-a { bottom: 10px; right: 20px; background: rgba(249, 226, 175, 0.15); }
+.vg-layout-snes .vg-btn-a.active { background: rgba(249, 226, 175, 0.7); }
+
+/* --- Раскладка для Sega MD (6 кнопок) --- */
+.vg-layout-sega .vg-btn-x { top: 10px; left: 0px; }
+.vg-layout-sega .vg-btn-y { top: 10px; left: 60px; }
+.vg-layout-sega .vg-btn-z { top: 10px; left: 120px; }
+.vg-layout-sega .vg-btn-a { bottom: 10px; left: 0px; }
+.vg-layout-sega .vg-btn-b { bottom: 10px; left: 60px; }
+.vg-layout-sega .vg-btn-c { bottom: 10px; left: 120px; }
+
+/* ============================================================
+   Плечевые кнопки (L, R)
+   ============================================================ */
+.vg-shoulders {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.vg-shr-btn {
+    pointer-events: auto;
+    width: 80px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    touch-action: none;
+}
+.vg-shr-btn.active {
+    background: rgba(137, 180, 250, 0.6);
+    border-color: #fff;
+}
 
 /* ============================================================
    System Кнопки (Start, Select)
@@ -175,4 +223,6 @@
     .vg-dpad { bottom: 10px; left: 10px; transform: scale(0.85); transform-origin: bottom left; }
     .vg-actions { bottom: 10px; right: 10px; transform: scale(0.85); transform-origin: bottom right; }
     .vg-system { bottom: 80px; transform: translateX(-50%) scale(0.9); }
+    .vg-shoulders { top: 5px; left: 5px; right: 5px; }
+    .vg-shr-btn { width: 60px; height: 30px; }
 }

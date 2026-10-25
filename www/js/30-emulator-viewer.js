@@ -5,30 +5,20 @@
 FAR._emulatorInstance = null;
 FAR._emulatorCurrentItem = null;
 FAR._emulatorBlobUrls = [];
-FAR._ejsLoaderPromise = null;     // Promise загрузки loader.js (одноразовый)
-FAR._ejsLibraryLoaded = false;    // Флаг: loader.js + emulator.min.js уже загружены в window
+FAR._ejsLoaderPromise = null;
+FAR._ejsLibraryLoaded = false;
 FAR._emulatorKeyHandler = null;
 
-// --- Карта расширений → ядро EmulatorJS (без NES!) ---
 FAR.EMULATOR_EXT_TO_CORE = {
-    // SNES
     'smc': 'snes', 'fig': 'snes', 'sfc': 'snes', 'gd3': 'snes',
     'gd7': 'snes', 'dx2': 'snes', 'bsx': 'snes', 'swc': 'snes',
-    // N64
     'z64': 'n64', 'n64': 'n64',
-    // PC Engine
     'pce': 'pce',
-    // NeoGeo Pocket
     'ngp': 'ngp', 'ngc': 'ngp',
-    // WonderSwan
     'ws': 'ws', 'wsc': 'ws',
-    // ColecoVision
     'col': 'coleco', 'cv': 'coleco',
-    // Commodore 64
     'd64': 'vice_x64sc',
-    // Nintendo DS / GBA / GB
     'nds': 'nds', 'gba': 'gba', 'gb': 'gb',
-    // Из выпадающего меню EmulatorJS (по системам)
     'psx': 'psx', 'bin': 'psx', 'cue': 'psx', 'img': 'psx',
     'iso': 'psx', 'pbp': 'psx', 'chd': 'psx',
     'vb': 'vb', 'vboy': 'vb',
@@ -59,9 +49,6 @@ FAR.isEmulatorFile = function(item) {
     return FAR._getEmulatorCore(item) !== null;
 };
 
-/**
- * Загружает loader.js один раз за сессию и ждёт появления window.EJS_emulator.
- */
 FAR._loadEmulatorLoader = function() {
     if (FAR._ejsLibraryLoaded && window.EmulatorJS) {
         return Promise.resolve();
@@ -107,9 +94,6 @@ FAR._loadEmulatorLoader = function() {
     return FAR._ejsLoaderPromise;
 };
 
-/**
- * Открывает игру в полноэкранной модалке EmulatorJS.
- */
 FAR.openEmulatorViewer = async function (item, side) {
     side = side || FAR.activePanel;
 
@@ -124,7 +108,6 @@ FAR.openEmulatorViewer = async function (item, side) {
         return;
     }
 
-    // Закрываем другие модалки
     try { FAR.closeViewer(); } catch (e) {}
     try { FAR.closePanoramaViewer(); } catch (e) {}
     try { if (typeof FAR.closeJsdosViewer === 'function') FAR.closeJsdosViewer(); } catch (e) {}
@@ -154,7 +137,6 @@ FAR.openEmulatorViewer = async function (item, side) {
     root.innerHTML = '';
     root.id = 'emulatorRoot';
 
-    // ==== ХУКИ СОСТОЯНИЙ ====
     loadingText.textContent = 'Загрузка модуля сохранений…';
     try {
         if (typeof FAR._installEmulatorStateHooks !== 'function') {
@@ -165,7 +147,6 @@ FAR.openEmulatorViewer = async function (item, side) {
         console.warn('[EmuState] Не удалось загрузить модуль состояний:', e);
     }
 
-    // ==== Загрузка ROM ====
     let blobUrl = null;
     try {
         const { data, contentType } = await FAR.readFileBodyFromSide(side, item);
@@ -180,9 +161,6 @@ FAR.openEmulatorViewer = async function (item, side) {
         return;
     }
 
-    // ============================================================
-    // Готовим EJS_* глобалы ДО loader.js.
-    // ============================================================
     window.EJS_player        = '#emulatorRoot';
     window.EJS_core          = core;
     window.EJS_gameUrl       = blobUrl;
@@ -201,9 +179,9 @@ FAR.openEmulatorViewer = async function (item, side) {
         FAR.toast('Игра запущена: ' + core, 'success');
         FAR._emulatorFocus(root);
 
-        // Инициализация виртуального джойстика
+        // Передаем ядро (core) для правильной раскладки джойстика
         if (typeof FAR.VirtualGamepad !== 'undefined') {
-            FAR.VirtualGamepad.mount(root, 'emulator');
+            FAR.VirtualGamepad.mount(root, core);
         }
     } catch (e) {
         console.error('openEmulatorViewer: run failed:', e);
@@ -212,26 +190,18 @@ FAR.openEmulatorViewer = async function (item, side) {
     }
 };
 
-/**
- * Запускает эмулятор.
- */
 FAR._runEmulator = async function(rootContainer, blobUrl) {
     if (!FAR._ejsLibraryLoaded) {
-        // ===== ПЕРВЫЙ ЗАПУСК ЗА СЕССИЮ =====
         await FAR._loadEmulatorLoader();
         await FAR._waitForEjsEmulator(blobUrl);
         return;
     }
 
-    // ===== ПОВТОРНЫЙ ЗАПУСК =====
     return new Promise(function(resolve, reject) {
         FAR._createEmulatorInstance(rootContainer, resolve, reject);
     });
 };
 
-/**
- * Ждёт, пока loader.js создаст window.EJS_emulator.
- */
 FAR._waitForEjsEmulator = function(expectedUrl) {
     return new Promise(function(resolve, reject) {
         let elapsed = 0;
@@ -247,7 +217,6 @@ FAR._waitForEjsEmulator = function(expectedUrl) {
                         return;
                     }
                 } catch (e) { /* ignore */ }
-
                 resolve();
                 return;
             }
@@ -287,9 +256,6 @@ FAR._emulatorFocus = function(root) {
     } catch (e) { /* ignore */ }
 };
 
-/**
- * Создаёт новый инстанс EmulatorJS с текущими EJS_* настройками.
- */
 FAR._createEmulatorInstance = function(rootContainer, resolve, reject) {
     try {
         const playerSelector = '#' + (rootContainer && rootContainer.id ? rootContainer.id : 'emulatorRoot');
@@ -378,11 +344,7 @@ FAR._ensureNipplejs = function() {
     return FAR._nipplejsPromise;
 };
 
-/**
- * Полностью выгружает текущий инстанс эмулятора EmulatorJS из памяти.
- */
 FAR._destroyEmulator = function() {
-    // Удаляем виртуальный джойстик
     const root = document.getElementById('emulatorRoot');
     if (root && typeof FAR.VirtualGamepad !== 'undefined') {
         FAR.VirtualGamepad.unmount(root);

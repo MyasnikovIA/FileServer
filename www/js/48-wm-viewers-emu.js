@@ -44,7 +44,7 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         FAR.setStatus('🕹️ JSDOS: ' + item.name);
         try { root.setAttribute('tabindex', '0'); root.focus(); const canvas = root.querySelector('canvas'); if (canvas) { canvas.setAttribute('tabindex', '0'); canvas.focus(); } } catch (e) {}
 
-        // Инициализация виртуального джойстика
+        // Передаем тип 'jsdos' (2 кнопки)
         if (typeof FAR.VirtualGamepad !== 'undefined') {
             FAR.VirtualGamepad.mount(root, 'jsdos');
         }
@@ -97,7 +97,7 @@ FAR.WM._mountNesViewer = async function (win, props) {
         loadingEl.style.display = 'none';
         FAR.setStatus('🎮 NES: ' + item.name);
 
-        // Инициализация виртуального джойстика
+        // Передаем тип 'nes' (2 кнопки)
         if (typeof FAR.VirtualGamepad !== 'undefined') {
             FAR.VirtualGamepad.mount(root, 'nes');
         }
@@ -184,9 +184,9 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         setTimeout(() => {
             if (loadingEl) loadingEl.style.display = 'none';
 
-            // Инициализация виртуального джойстика после загрузки
+            // Передаем ядро (core) для правильной раскладки
             if (typeof FAR.VirtualGamepad !== 'undefined') {
-                FAR.VirtualGamepad.mount(root, 'emulator');
+                FAR.VirtualGamepad.mount(root, core);
             }
         }, 3000);
         FAR.setStatus('🕹️ EmulatorJS: ' + item.name + ' (' + core + ')');
