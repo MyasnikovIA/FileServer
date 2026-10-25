@@ -1,17 +1,6 @@
 // ============================================================
 // 44-wm-apps.js — реестр приложений
 // ============================================================
-//
-// Каждое приложение — объект:
-//   id        : уникальный идентификатор
-//   title     : отображаемое имя
-//   icon      : эмодзи
-//   keywords  : для поиска в Пуске
-//   singleton : true — открывать одно окно, false — много
-//   open(win, props) — вызывается при открытии окна;
-//                       внутрь win.bodyEl приложение само
-//                       кладёт свой UI.
-//   onClose(win) — необязательный колбэк очистки.
 
 FAR.WM._apps = {};
 
@@ -27,11 +16,6 @@ FAR.WM.getApp = function (id) {
     return FAR.WM._apps[id] || null;
 };
 
-// ============================================================
-// Файл: js/44-wm-apps.js
-// Функция: FAR.WM.openApp (полный листинг)
-// ============================================================
-
 FAR.WM.openApp = async function (appId, opts) {
     opts = opts || {};
     const def = FAR.WM.getApp(appId);
@@ -40,12 +24,6 @@ FAR.WM.openApp = async function (appId, opts) {
         return null;
     }
 
-    // Singleton — если окно уже открыто, фокусируем его и
-    // вызываем onReopen (если приложение поддерживает).
-    //
-    // Это критично для MP3-плеера: без onReopen новый файл,
-    // открытый через Проводник, попадал бы «в никуда» —
-    // окно просто получало фокус, а playlist не менялся.
     if (def.singleton && !opts.forceNew && !opts._restoring) {
         const existing = FAR.WM.state.windows.find(function (w) {
             return w.appId === appId;
@@ -135,6 +113,7 @@ FAR.WM.registerApp({
         // Очистка при необходимости
     }
 });
+
 // ============================================================
 // Приложение: Браузер (внутри WM-окна)
 // ============================================================
@@ -309,27 +288,7 @@ FAR.WM.registerApp({
     onClose: function (win) { FAR.WM._finalizeViewer(win); }
 });
 
-// ============================================================
-// Приложение: NES
-// ============================================================
-
-FAR.WM.registerApp({
-    id: 'nes',
-    title: 'NES',
-    icon: '🎮',
-    keywords: 'nes денди игра game',
-    singleton: false,
-    width: 900,
-    height: 700,
-    open: async function (win, props) {
-        if (props && props.file) {
-            await FAR.WM._mountNesViewer(win, props);
-        } else {
-            FAR.WM._mountFilePickerPrompt(win, 'Выберите .nes-ROM');
-        }
-    },
-    onClose: function (win) { FAR.WM._finalizeViewer(win); }
-});
+// ПРИЛОЖЕНИЕ NES УДАЛЕНО
 
 // ============================================================
 // Приложение: EmulatorJS
@@ -339,7 +298,7 @@ FAR.WM.registerApp({
     id: 'emulator',
     title: 'EmulatorJS',
     icon: '🕹️',
-    keywords: 'эмулятор snes n64 psx gba sega',
+    keywords: 'эмулятор snes n64 psx gba sega nes dendy',
     singleton: false,
     width: 1000,
     height: 720,

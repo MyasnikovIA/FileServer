@@ -13,7 +13,7 @@
     -webkit-user-select: none;
 }
 
-/* Кнопка вызова джойстика сдвинута левее, чтобы не мешать меню EmulatorJS */
+/* Кнопка вызова джойстика */
 .vg-toggle-btn {
     position: absolute;
     top: 10px;
@@ -35,6 +35,13 @@
 }
 .vg-toggle-btn:hover { background: rgba(0, 0, 0, 0.7); }
 .vg-toggle-btn.active { background: rgba(137, 180, 250, 0.8); border-color: #fff; }
+
+/* Скрываем кнопку на устройствах с мышью (ПК) */
+@media (hover: hover) and (pointer: fine) {
+    .vg-toggle-btn {
+        display: none !important;
+    }
+}
 
 .vg-pad-container {
     position: absolute;
@@ -93,6 +100,10 @@
     background: rgba(0, 0, 0, 0.2);
 }
 
+/* Новое расположение L и R в углах крестовины */
+.vg-dpad-l { top: 0; left: 0; }
+.vg-dpad-r { top: 0; right: 0; }
+
 /* ============================================================
    Action Кнопки (A, B, X, Y, C, Z)
    ============================================================ */
@@ -131,9 +142,37 @@
     color: #fff;
 }
 
-/* --- Раскладка для NES (2 кнопки) --- */
-.vg-layout-nes .vg-btn-a { bottom: 20px; right: 20px; }
-.vg-layout-nes .vg-btn-b { bottom: 20px; right: 90px; }
+/* Turbo-кнопки (для NES) */
+.vg-turbo-btn {
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px dashed rgba(255, 255, 255, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    transition: background 0.1s;
+}
+.vg-turbo-btn.active {
+    background: rgba(166, 227, 161, 0.6);
+    border-color: #fff;
+    color: #fff;
+}
+
+/* --- Раскладка для NES (2 кнопки + турбо) --- */
+.vg-layout-nes .vg-btn-b { bottom: 20px; left: 0px; }
+.vg-layout-nes .vg-btn-a { bottom: 20px; left: 70px; }
+.vg-layout-nes .vg-btn-tb { bottom: 80px; left: 0px; }
+.vg-layout-nes .vg-btn-ta { bottom: 80px; left: 70px; }
 
 /* --- Раскладка для SNES/PSX (4 кнопки ромбом) --- */
 .vg-layout-snes .vg-btn-y { top: 10px; left: 20px; }
@@ -149,41 +188,6 @@
 .vg-layout-sega .vg-btn-a { bottom: 10px; left: 0px; }
 .vg-layout-sega .vg-btn-b { bottom: 10px; left: 60px; }
 .vg-layout-sega .vg-btn-c { bottom: 10px; left: 120px; }
-
-/* ============================================================
-   Плечевые кнопки (L, R)
-   ============================================================ */
-.vg-shoulders {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    right: 10px;
-    display: flex;
-    justify-content: space-between;
-    pointer-events: none;
-}
-
-.vg-shr-btn {
-    pointer-events: auto;
-    width: 80px;
-    height: 40px;
-    background: rgba(0, 0, 0, 0.4);
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-radius: 10px;
-    color: #fff;
-    font-size: 14px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    user-select: none;
-    touch-action: none;
-}
-.vg-shr-btn.active {
-    background: rgba(137, 180, 250, 0.6);
-    border-color: #fff;
-}
 
 /* ============================================================
    System Кнопки (Start, Select)
@@ -223,6 +227,4 @@
     .vg-dpad { bottom: 10px; left: 10px; transform: scale(0.85); transform-origin: bottom left; }
     .vg-actions { bottom: 10px; right: 10px; transform: scale(0.85); transform-origin: bottom right; }
     .vg-system { bottom: 80px; transform: translateX(-50%) scale(0.9); }
-    .vg-shoulders { top: 5px; left: 5px; right: 5px; }
-    .vg-shr-btn { width: 60px; height: 30px; }
 }

@@ -136,7 +136,6 @@ FAR.WM.openWindow = function (opts) {
 
     el.innerHTML =
         '<div class="wm-titlebar" data-role="titlebar">' +
-        '<span class="wm-title-icon">' + FAR.escapeHtml(icon) + '</span>' +
         '<span class="wm-title-text">' + FAR.escapeHtml(title) + '</span>' +
         '<div class="wm-title-actions">' +
         '<button class="wm-title-btn wm-btn-min" title="Свернуть">─</button>' +

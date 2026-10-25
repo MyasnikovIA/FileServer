@@ -13,7 +13,6 @@ FAR.VIEWER_MODALS = [
     { modal: 'mp3ViewerModal',         prev: 'mp3PrevBtn',    next: 'mp3NextBtn'    },
     { modal: 'videoViewerModal',       prev: 'videoPrevBtn',  next: 'videoNextBtn'  },
     { modal: 'jsdosViewerModal',       prev: 'jsdosPrevBtn',  next: 'jsdosNextBtn'  },
-    { modal: 'nesViewerModal',         prev: 'nesPrevBtn',    next: 'nesNextBtn'    },
     { modal: 'emulatorViewerModal',    prev: 'emuPrevBtn',    next: 'emuNextBtn'    },
     { modal: 'lbrn2ViewerModal',       prev: 'lbrn2PrevBtn',  next: 'lbrn2NextBtn'  },
     { modal: 'gcodeViewerModal',       prev: 'gcodePrevBtn',  next: 'gcodeNextBtn'  }
@@ -91,7 +90,6 @@ FAR._viewerCloseAll = function () {
     try { if (typeof FAR.closeMp3Viewer      === 'function') FAR.closeMp3Viewer();      } catch (e) {}
     try { if (typeof FAR.closeVideoViewer    === 'function') FAR.closeVideoViewer();    } catch (e) {}
     try { if (typeof FAR.closeJsdosViewer    === 'function') FAR.closeJsdosViewer();    } catch (e) {}
-    try { if (typeof FAR.closeNesViewer      === 'function') FAR.closeNesViewer();      } catch (e) {}
     try { if (typeof FAR.closeEmulatorViewer === 'function') FAR.closeEmulatorViewer(); } catch (e) {}
     try { if (typeof FAR.closeLbrn2Viewer    === 'function') FAR.closeLbrn2Viewer();    } catch (e) {}
     try { if (typeof FAR.closeGcodeViewer    === 'function') FAR.closeGcodeViewer();    } catch (e) {}
@@ -170,15 +168,7 @@ FAR.openFile = async function (item, side, index) {
         }
     } catch (e) { console.warn('Ошибка проверки JSDOS:', e); }
 
-    try {
-        if (typeof FAR.isNes === 'function' && FAR.isNes(item)) {
-            if (!FAR._viewerEnsureFn('openNesViewer')) return;
-            await FAR.openNesViewer(item, side);
-            if (myToken !== FAR._viewerToken) return;
-            FAR._viewerUpdateNavButtons();
-            return;
-        }
-    } catch (e) { console.warn('Ошибка проверки NES:', e); }
+    // Маршрутизация NES удалена, чтобы файл обрабатывался как EmulatorFile
 
     try {
         if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) {

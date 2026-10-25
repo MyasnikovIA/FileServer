@@ -44,7 +44,6 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         FAR.setStatus('🕹️ JSDOS: ' + item.name);
         try { root.setAttribute('tabindex', '0'); root.focus(); const canvas = root.querySelector('canvas'); if (canvas) { canvas.setAttribute('tabindex', '0'); canvas.focus(); } } catch (e) {}
 
-        // Передаем тип 'jsdos' (2 кнопки)
         if (typeof FAR.VirtualGamepad !== 'undefined') {
             FAR.VirtualGamepad.mount(root, 'jsdos');
         }
@@ -53,58 +52,7 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
     } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }
 };
 
-FAR.WM._mountNesViewer = async function (win, props) {
-    const item = props.file;
-    const side = props.side || FAR.activePanel;
-
-    win.el.querySelector('.wm-title-text').textContent = '🎮 ' + item.name;
-    win.bodyEl.innerHTML =
-        '<div style="height:100%;position:relative;background:#000;display:flex;align-items:center;justify-content:center;">' +
-        '<div data-role="root" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;min-height:400px;"></div>' +
-        '<div data-role="loading" style="position:absolute;inset:0;background:rgba(0,0,0,0.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#a6adc8;z-index:10;">' +
-        '<div style="width:50px;height:50px;border:4px solid #313244;border-top-color:#89b4fa;border-radius:50%;animation:spin 1s linear infinite;"></div>' +
-        '<div data-role="status" style="font-size:14px;">Загрузка эмулятора…</div></div></div>';
-
-    const root = win.bodyEl.querySelector('[data-role="root"]');
-    const loadingEl = win.bodyEl.querySelector('[data-role="loading"]');
-    const statusEl = win.bodyEl.querySelector('[data-role="status"]');
-
-    let jsnesLib = null;
-    try {
-        if (typeof FAR._loadJsnesDynamically !== 'function') throw new Error('Модуль 29-nes-viewer.js не загружен');
-        jsnesLib = await FAR._loadJsnesDynamically();
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка JSNES: ' + FAR.escapeHtml(e.message) + '</div>'; return; }
-
-    let romBuffer = null;
-    try {
-        statusEl.textContent = 'Загрузка ROM…';
-        const r = await FAR.readFileBodyFromSide(side, item);
-        romBuffer = r.data;
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка ROM: ' + FAR.escapeHtml(e.message) + '</div>'; return; }
-
-    await new Promise(r => setTimeout(r, 30));
-
-    try {
-        statusEl.textContent = 'Инициализация…';
-        const browser = new jsnesLib.Browser({
-            container: root,
-            onError: function (e) { FAR.toast('Ошибка NES: ' + (e && e.message ? e.message : e), 'error'); }
-        });
-        win.props._nesBrowser = browser;
-        browser.loadROM(romBuffer);
-        setTimeout(() => { try { browser.fitInParent(); } catch (e) {} }, 100);
-        setTimeout(() => { try { browser.fitInParent(); } catch (e) {} }, 400);
-        loadingEl.style.display = 'none';
-        FAR.setStatus('🎮 NES: ' + item.name);
-
-        // Передаем тип 'nes' (2 кнопки)
-        if (typeof FAR.VirtualGamepad !== 'undefined') {
-            FAR.VirtualGamepad.mount(root, 'nes');
-        }
-
-        FAR.WM._installViewerNavButtons(win, item, side);
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }
-};
+// _mountNesViewer УДАЛЕНА
 
 FAR.WM._mountEmulatorViewer = async function (win, props) {
     const others = FAR.WM.state.windows.filter(w => w.appId === 'emulator' && w.id !== win.id);
@@ -181,10 +129,10 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
             system: core, color: '#89b4fa', startOnLoad: true
         });
         win.props._emulatorInstance = emu;
-        setTimeout(() => {
-            if (loadingEl) loadingEl.style.display = 'none';
 
-            // Передаем ядро (core) для правильной раскладки
+        setTimeout(() => {
+            if (!FAR.WM.getWindow(win.id)) return;
+            if (loadingEl) loadingEl.style.display = 'none';
             if (typeof FAR.VirtualGamepad !== 'undefined') {
                 FAR.VirtualGamepad.mount(root, core);
             }

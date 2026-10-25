@@ -10,15 +10,26 @@ FAR._ejsLibraryLoaded = false;
 FAR._emulatorKeyHandler = null;
 
 FAR.EMULATOR_EXT_TO_CORE = {
+    // NES (Денди)
+    'nes': 'nes', 'unf': 'nes', 'unif': 'nes',
+    // SNES
     'smc': 'snes', 'fig': 'snes', 'sfc': 'snes', 'gd3': 'snes',
     'gd7': 'snes', 'dx2': 'snes', 'bsx': 'snes', 'swc': 'snes',
+    // N64
     'z64': 'n64', 'n64': 'n64',
+    // PC Engine
     'pce': 'pce',
+    // NeoGeo Pocket
     'ngp': 'ngp', 'ngc': 'ngp',
+    // WonderSwan
     'ws': 'ws', 'wsc': 'ws',
+    // ColecoVision
     'col': 'coleco', 'cv': 'coleco',
+    // Commodore 64
     'd64': 'vice_x64sc',
+    // Nintendo DS / GBA / GB
     'nds': 'nds', 'gba': 'gba', 'gb': 'gb',
+    // Из выпадающего меню EmulatorJS (по системам)
     'psx': 'psx', 'bin': 'psx', 'cue': 'psx', 'img': 'psx',
     'iso': 'psx', 'pbp': 'psx', 'chd': 'psx',
     'vb': 'vb', 'vboy': 'vb',
@@ -41,7 +52,7 @@ FAR.EMULATOR_EXT_TO_CORE = {
 FAR._getEmulatorCore = function(item) {
     if (!item || item.isFolder) return null;
     const ext = (item.name.split('.').pop() || '').toLowerCase();
-    if (ext === 'nes') return null;
+    // Убрана строка: if (ext === 'nes') return null;
     return FAR.EMULATOR_EXT_TO_CORE[ext] || null;
 };
 
@@ -111,7 +122,7 @@ FAR.openEmulatorViewer = async function (item, side) {
     try { FAR.closeViewer(); } catch (e) {}
     try { FAR.closePanoramaViewer(); } catch (e) {}
     try { if (typeof FAR.closeJsdosViewer === 'function') FAR.closeJsdosViewer(); } catch (e) {}
-    try { if (typeof FAR.closeNesViewer === 'function') FAR.closeNesViewer(); } catch (e) {}
+    // Убрано закрытие NES-модалки, так как она больше не используется
 
     FAR._emulatorCurrentItem = item;
     FAR._emulatorCurrentSide = side;
@@ -179,7 +190,6 @@ FAR.openEmulatorViewer = async function (item, side) {
         FAR.toast('Игра запущена: ' + core, 'success');
         FAR._emulatorFocus(root);
 
-        // Передаем ядро (core) для правильной раскладки джойстика
         if (typeof FAR.VirtualGamepad !== 'undefined') {
             FAR.VirtualGamepad.mount(root, core);
         }
@@ -356,7 +366,7 @@ FAR._destroyEmulator = function() {
         try {
             if (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
                 emu.Module.AL.currentCtx.audioCtx) {
-                emu.Module.AL.currentCtx.audioCtx.close();
+                try { emu.Module.AL.currentCtx.audioCtx.close(); } catch(e) {}
             }
         } catch (e) {}
 
@@ -379,6 +389,10 @@ FAR._destroyEmulator = function() {
                 emu.Module.abort();
             }
         } catch (e) {}
+
+        if (window.EJS_emulator === emu) {
+            try { window.EJS_emulator = null; } catch (e) {}
+        }
     }
 
     if (FAR._emulatorKeyHandler) {
@@ -387,8 +401,6 @@ FAR._destroyEmulator = function() {
         } catch (e) {}
         FAR._emulatorKeyHandler = null;
     }
-
-    try { window.EJS_emulator = null; } catch (e) {}
 
     FAR._emulatorInstance = null;
 

@@ -27,11 +27,6 @@ FAR.setupKeyboard = function() {
                 FAR.closeJsdosViewer();
                 return;
             }
-            const nesModalEsc = document.getElementById('nesViewerModal');
-            if (nesModalEsc && !nesModalEsc.classList.contains('hidden')) {
-                FAR.closeNesViewer();
-                return;
-            }
             const emuModalEsc = document.getElementById('emulatorViewerModal');
             if (emuModalEsc && !emuModalEsc.classList.contains('hidden')) {
                 FAR.closeEmulatorViewer();
@@ -86,9 +81,6 @@ FAR.setupKeyboard = function() {
 
         const jsdosModal2 = document.getElementById('jsdosViewerModal');
         if (jsdosModal2 && !jsdosModal2.classList.contains('hidden')) return;
-
-        const nesModal2 = document.getElementById('nesViewerModal');
-        if (nesModal2 && !nesModal2.classList.contains('hidden')) return;
 
         const emuModal2 = document.getElementById('emulatorViewerModal');
         if (emuModal2 && !emuModal2.classList.contains('hidden')) return;

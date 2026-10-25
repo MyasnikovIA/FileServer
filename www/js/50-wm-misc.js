@@ -114,7 +114,9 @@ FAR.WM._installOpenFileWrapper = function () {
         try {
             if (typeof FAR.WM.isFbmp3 === 'function' && FAR.WM.isFbmp3(item)) return FAR.WM.openApp('mp3', { props: { file: item, side: side, playlistPath: item.path } });
             if (typeof FAR.isJsdos === 'function' && FAR.isJsdos(item)) return FAR.WM.openApp('jsdos', { props: { file: item, side: side } });
-            if (typeof FAR.isNes === 'function' && FAR.isNes(item)) return FAR.WM.openApp('nes', { props: { file: item, side: side } });
+
+            // Маршрутизация NES удалена, идет в 'emulator'
+
             if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) return FAR.WM.openApp('emulator', { props: { file: item, side: side } });
             if (typeof FAR.isMp3 === 'function' && FAR.isMp3(item)) return FAR.WM.openApp('mp3', { props: { file: item, side: side } });
             if (typeof FAR.isVideo === 'function' && FAR.isVideo(item)) return FAR.WM.openApp('video', { props: { file: item, side: side } });
@@ -140,5 +142,4 @@ FAR.WM._installOpenFileWrapper = function () {
     };
 };
 
-// ВАЖНО: Вызываем установку обёртки в самом конце!
 FAR.WM._installOpenFileWrapper();

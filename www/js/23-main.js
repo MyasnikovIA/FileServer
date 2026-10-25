@@ -31,7 +31,7 @@ FAR.injectModals = function() {
         'modals/console.html',
         'modals/videochat-viewer.html',
         'modals/videochat-broadcaster.html',
-        'modals/nes-viewer.html',
+        // 'modals/nes-viewer.html',  <-- УДАЛЕНО
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',
         'modals/lbrn2-viewer.html',

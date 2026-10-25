@@ -20,11 +20,7 @@
 // Учёт и освобождение blob URL
 // ------------------------------------------------------------
 
-/**
- * Регистрирует blob URL в окне, чтобы освободить его при закрытии.
- * @param {Object} win  — объект окна WM (из FAR.WM.openWindow)
- * @param {string} url  — URL.createObjectURL(...)
- */
+
 FAR.WM._trackBlobUrl = function (win, url) {
     if (!win || !win.props || !url) return;
     if (!Array.isArray(win.props._blobUrls)) win.props._blobUrls = [];
@@ -34,13 +30,10 @@ FAR.WM._trackBlobUrl = function (win, url) {
 /**
  * Освобождает все ресурсы окна-просмотрщика:
  *  • отзывает все blob URL;
- *  • останавливает JSDOS / NES / EmulatorJS;
+ *  • останавливает JSDOS / NES / EmulatorJS (включая AudioContext);
  *  • уничтожает Pannellum-вьюер;
  *  • уничтожает API встроенного браузера.
  *  • удаляет виртуальный джойстик.
- *
- * Вызывается из onClose приложений viewer/panorama/pdf/video/
- * jsdos/nes/emulator/mp3.
  */
 FAR.WM._finalizeViewer = function (win) {
     if (!win || !win.props) return;
@@ -66,14 +59,35 @@ FAR.WM._finalizeViewer = function (win) {
         win.props._nesBrowser = null;
     }
 
-    // EmulatorJS
+    // EmulatorJS (жесткая остановка аудио и WASM)
     if (win.props._emulatorInstance) {
+        const emu = win.props._emulatorInstance;
         try {
-            if (typeof window.EJS_emulator !== 'undefined' && window.EJS_emulator) {
-                try { window.EJS_emulator.pause && window.EJS_emulator.pause(true); } catch (e) {}
-                try { window.EJS_emulator.destroy && window.EJS_emulator.destroy(); } catch (e) {}
+            // 1. Обязательно закрываем AudioContext, иначе звук продолжит играть
+            if (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
+                emu.Module.AL.currentCtx.audioCtx) {
+                try { emu.Module.AL.currentCtx.audioCtx.close(); } catch (e) {}
+            }
+            // 2. Останавливаем игровой цикл
+            if (emu.gameManager && typeof emu.gameManager.toggleMainLoop === 'function') {
+                try { emu.gameManager.toggleMainLoop(0); } catch (e) {}
+            }
+            if (emu.Module && typeof emu.Module.pauseMainLoop === 'function') {
+                try { emu.Module.pauseMainLoop(); } catch (e) {}
+            }
+            // 3. Вызываем встроенные методы
+            if (typeof emu.pause === 'function') { try { emu.pause(true); } catch (e) {} }
+            if (typeof emu.destroy === 'function') { try { emu.destroy(); } catch (e) {} }
+            // 4. Прерываем WebAssembly
+            if (emu.Module && typeof emu.Module.abort === 'function') {
+                try { emu.Module.abort(); } catch (e) {}
             }
         } catch (e) { /* ignore */ }
+
+        // Очищаем глобальную ссылку только если это тот же инстанс
+        if (window.EJS_emulator === emu) {
+            window.EJS_emulator = null;
+        }
         win.props._emulatorInstance = null;
     }
 
@@ -98,19 +112,11 @@ FAR.WM._finalizeViewer = function (win) {
     }
 };
 
+
 // ------------------------------------------------------------
 // Кнопки ◀ / ▶ в заголовке окна
 // ------------------------------------------------------------
 
-/**
- * Добавляет в заголовок окна кнопки перехода к предыдущему/следующему
- * файлу в текущей директории панели (аналог VIEWER_MODALS в панельном
- * режиме). Используется просмотрщиками.
- *
- * @param {Object} win   — окно WM
- * @param {Object} item  — текущий файл
- * @param {string} side  — 'left' | 'right'
- */
 FAR.WM._installViewerNavButtons = function (win, item, side) {
     if (!win || !win.el) return;
     const titlebar = win.el.querySelector('.wm-titlebar');
@@ -130,7 +136,6 @@ FAR.WM._installViewerNavButtons = function (win, item, side) {
     });
     if (curIdx < 0) return;
 
-    // Индексы предыдущего/следующего не-папки
     const findFileIdx = function (fromIdx, dir) {
         let i = fromIdx + dir;
         while (i >= 0 && i < files.length) {
@@ -171,6 +176,7 @@ FAR.WM._installViewerNavButtons = function (win, item, side) {
         actions.insertBefore(createNavBtn('▶', nextIdx, 'Следующий файл'), firstAction);
     }
 };
+
 
 // ------------------------------------------------------------
 // Универсальный просмотрщик файлов
@@ -257,10 +263,6 @@ FAR.WM._mountFileViewer = async function (win, props) {
 // Панорама 360° (Pannellum)
 // ------------------------------------------------------------
 
-/**
- * Обработчик клика по хотспоту в WM-режиме.
- * Переходит на другую панораму, сохраняя позицию камеры.
- */
 FAR.WM._panoNavigateHotspot = async function (win, hs, side) {
     if (!hs) return;
     if (win._panoNavigating) return;
@@ -283,20 +285,17 @@ FAR.WM._panoNavigateHotspot = async function (win, hs, side) {
             return;
         }
 
-        // Сбрасываем старые blob URL
         if (Array.isArray(win.props._blobUrls)) {
             for (const u of win.props._blobUrls) {
                 try { URL.revokeObjectURL(u); } catch (e) {}
             }
             win.props._blobUrls = [];
         }
-        // Уничтожаем предыдущий вьюер
         if (win.props._pannellumViewer) {
             try { win.props._pannellumViewer.destroy(); } catch (e) {}
             win.props._pannellumViewer = null;
         }
 
-        // Сохраняем целевую позицию камеры
         win.props.file = targetItem;
         win.props._initialPitch = Number(hs.point_pitch) || 0;
         win.props._initialYaw   = Number(hs.point_yaw)   || 0;
@@ -338,7 +337,6 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
     const uniqueId = 'wm-pano-' + win.id + '-' + Date.now();
     canvasEl.id = uniqueId;
 
-    // Уничтожаем предыдущий вьюер (при повторном монтировании)
     if (win.props._pannellumViewer) {
         try { win.props._pannellumViewer.destroy(); } catch (e) {}
         win.props._pannellumViewer = null;
@@ -352,7 +350,6 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
         const url = URL.createObjectURL(blob);
         FAR.WM._trackBlobUrl(win, url);
 
-        // Хотспоты: либо из override (редактор), либо из JSON рядом
         let hotspots = [];
         if (Array.isArray(props._hotspotsOverride)) {
             hotspots = props._hotspotsOverride.map(function (hs) {
@@ -390,7 +387,6 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
             }
         }
 
-        // Устанавливаем side для pannellum-обёртки (см. 25-panorama-db-resolver.js)
         const oldSide = FAR._panoCurrentSide;
         FAR._panoCurrentSide = side;
 
@@ -419,7 +415,6 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
         win.props._pannellumViewer = viewer;
         FAR._panoCurrentSide = oldSide;
 
-        // Перехват кликов по хотспотам
         viewer.on('load', function () {
             loadingEl.style.display = 'none';
             setTimeout(function () {
@@ -455,7 +450,6 @@ FAR.WM._mountPanoramaViewer = async function (win, props) {
                     }, true);
                 });
 
-                // Обработчик двойного клика — открывает редактор (если загружен)
                 if (typeof FAR.WM._attachPanoEditorDblClick === 'function') {
                     FAR.WM._attachPanoEditorDblClick(win, uniqueId, item, side);
                 }
@@ -567,7 +561,6 @@ FAR.WM._mountVideoViewer = async function (win, props) {
     const video  = win.bodyEl.querySelector('[data-role="video"]');
     const infoEl = win.bodyEl.querySelector('[data-role="info"]');
 
-    // Пробуем прямой URL (сервер поддерживает Range — ленивая загрузка)
     const directUrl = FAR.buildDirectFileUrl(item, side);
 
     if (directUrl) {
@@ -576,7 +569,6 @@ FAR.WM._mountVideoViewer = async function (win, props) {
             infoEl.textContent = FAR.formatSize(item.size) + ' • ' + (item.contentType || 'video/*');
         }
 
-        // Fallback: если прямой URL не работает — грузим полностью
         video.addEventListener('error', async function onErr() {
             video.removeEventListener('error', onErr);
             try {
@@ -608,6 +600,7 @@ FAR.WM._mountVideoViewer = async function (win, props) {
 
     FAR.WM._installViewerNavButtons(win, item, side);
 };
+
 
 // ------------------------------------------------------------
 // Встроенный браузер
