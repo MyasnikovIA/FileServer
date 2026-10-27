@@ -21,7 +21,44 @@ FAR.WM._mountTextEditor = async function(win, props) {
         return;
     }
 
-    win.el.querySelector('.wm-title-text').textContent = '📝 ' + item.name;
+    // ============================================================
+    // FIX (важно): строим _id из path, а не доверяем item._id.
+    // ------------------------------------------------------------
+    // Причина бага: при повторном открытии файла из другой папки
+    // (и при переключении каталогов) в объекте item мог оставаться
+    // _id, указывающий на ДРУГОЙ файл, если объект был взят из
+    // устаревшего снимка файлового списка. При этом item.path
+    // оставался верным. Поскольку серверный getAttachment строит
+    // URL именно из _id (декодирует _id → path), получалось, что
+    // вместо file1 грузился file2.
+    //
+    // Решение: жёстко привязываемся к path. И _id, и фактическое
+    // содержимое файла теперь однозначно определяются path.
+    // ============================================================
+    const itemPath = FAR.normPath(item.path || '');
+    if (!itemPath) {
+        FAR.toast('У файла не задан path — открыть нельзя', 'error');
+        return;
+    }
+    const itemName = item.name || itemPath.split('/').pop() || 'file.txt';
+    const itemId   = 'f:' + encodeURIComponent(itemPath);
+
+    win.props._openedPath = itemPath;
+    win.props._openedId   = itemId;
+    win.props._openedName = itemName;
+
+    // Diagnostic log: помогает отследить, если item._id != вычисленного
+    try {
+        if (item._id && item._id !== itemId) {
+            console.warn('[WM TextEditor] item._id != derived id:', {
+                passedId: item._id,
+                derivedId: itemId,
+                path: itemPath
+            });
+        }
+    } catch (e) {}
+
+    win.el.querySelector('.wm-title-text').textContent = '📝 ' + itemName;
     win.bodyEl.style.display = 'flex';
     win.bodyEl.style.flexDirection = 'column';
     win.bodyEl.style.background = '#1e1e2e';
@@ -46,10 +83,19 @@ FAR.WM._mountTextEditor = async function(win, props) {
 
     let currentContent = '';
 
-    // Загрузка файла
+    // Загрузка файла: используем ТОЛЬКО id, построенный из path,
+    // чтобы гарантированно читать содержимое именно этого файла.
     try {
-        const res = await FAR.readFileBodyFromSide(side, item);
+        const freshItem = {
+            _id: itemId,
+            path: itemPath,
+            name: itemName,
+            contentType: item.contentType || 'text/plain'
+        };
+
+        const res = await FAR.readFileBodyFromSide(side, freshItem);
         const text = new TextDecoder('utf-8').decode(res.data);
+
         currentContent = text;
         ta.value = text;
         statusEl.textContent = 'Готово';
@@ -103,7 +149,8 @@ FAR.WM._mountTextEditor = async function(win, props) {
         }
     });
 
-    // Сохранение
+    // Сохранение: используем зафиксированный win.props._openedId,
+    // а не item._id. Это исключает сохранение «не в тот файл».
     btnSave.onclick = async function() {
         const text = ta.value;
         if (text === currentContent) {
@@ -120,19 +167,21 @@ FAR.WM._mountTextEditor = async function(win, props) {
             const s = FAR.side[side];
             if (!s || !s.db) throw new Error('Нет подключения к БД');
 
-            const blob = new Blob([text], { type: item.contentType || 'text/plain' });
+            const contentType = item.contentType || 'text/plain';
+            const blob = new Blob([text], { type: contentType });
+
             let rev = null;
             try {
-                const doc = await s.db.get(item._id);
+                const doc = await s.db.get(win.props._openedId);
                 rev = doc._rev;
             } catch (e) {
                 if (e.status !== 404) throw e;
             }
 
-            await s.db.putAttachment(item._id, 'b', rev, blob, item.contentType || 'text/plain');
+            await s.db.putAttachment(win.props._openedId, 'b', rev, blob, contentType);
 
             // Обновляем локальный кэш
-            const idx = s.fileIndex.find(f => f._id === item._id);
+            const idx = s.fileIndex.find(f => f._id === win.props._openedId);
             if (idx) {
                 idx.size = blob.size;
                 idx.mtime = Date.now();
