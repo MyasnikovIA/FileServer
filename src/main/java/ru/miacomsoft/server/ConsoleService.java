@@ -2,6 +2,8 @@ package ru.miacomsoft.server;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -16,6 +18,14 @@ public class ConsoleService {
 
     private final Map<String, ConsoleSession> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor();
+
+    // ---- Hermes Agent (профиль) ----
+    private boolean hermesEnabled = false;
+    private String  hermesShell = "";
+    private String  hermesCwd = "";
+    private List<String> hermesCommands = new ArrayList<>();
+    private long hermesStartupDelayMs = 800;
+    private long hermesCommandDelayMs = 300;
 
     public ConsoleService(String shell, String cwd, long timeoutSec, long maxOutputBytes) {
         this.defaultShell = shell;
@@ -128,6 +138,54 @@ public class ConsoleService {
         ConsoleSession session = sessions.remove(sessionId);
         if (session != null) {
             session.close();
+        }
+    }
+
+    // ============================================================
+    // Hermes Agent
+    // ============================================================
+
+    public void configureHermes(boolean enabled, String shell, String cwd,
+                                List<String> commands,
+                                long startupDelayMs, long commandDelayMs) {
+        this.hermesEnabled        = enabled;
+        this.hermesShell          = shell == null ? "" : shell.trim();
+        this.hermesCwd            = cwd == null ? "" : cwd.trim();
+        this.hermesCommands       = commands != null ? new ArrayList<>(commands) : new ArrayList<>();
+        this.hermesStartupDelayMs = startupDelayMs;
+        this.hermesCommandDelayMs = commandDelayMs;
+    }
+
+    public boolean isHermesEnabled() { return hermesEnabled; }
+
+    public List<String> getHermesCommands() { return new ArrayList<>(hermesCommands); }
+
+    /**
+     * Запускает shell и отправляет профиль Hermes-команд.
+     * Если сессия уже запущена — ничего не делает.
+     */
+    public void startHermes(String sessionId) {
+        ConsoleSession session = getOrCreate(sessionId);
+        if (!session.isClosed()) return;
+
+        try {
+            String shell = (hermesShell != null && !hermesShell.isEmpty())
+                    ? hermesShell : resolveShell();
+            String cwd = (hermesCwd != null && !hermesCwd.isEmpty())
+                    ? hermesCwd : resolveCwd();
+
+            session.startShell(shell, cwd);
+
+            if (!hermesCommands.isEmpty()) {
+                session.sendInitialCommands(
+                        hermesCommands,
+                        hermesStartupDelayMs,
+                        hermesCommandDelayMs
+                );
+            }
+        } catch (IOException e) {
+            System.err.println("[ConsoleService] Hermes start error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

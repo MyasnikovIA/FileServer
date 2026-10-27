@@ -40,7 +40,7 @@ public class FileServer {
     private static Path webRoot;
     private static ConsoleService consoleService;
     private static VideoChatServer videoChatServer;
-    private static OllamaProcessService ollamaService;         // ← ИЗМЕНЕНО
+    private static OllamaProcessService ollamaService;
 
     private static StaticHandler staticHandler;
     private static RootHandler   rootHandler;
@@ -82,6 +82,15 @@ public class FileServer {
                 config.consoleTimeoutSec,
                 config.consoleMaxOutputBytes);
 
+        // ---- Hermes Agent (профиль консоли) ----
+        consoleService.configureHermes(
+                config.hermesEnabled,
+                config.hermesShell,
+                config.hermesCwd,
+                config.hermesCommands,
+                config.hermesStartupDelayMs,
+                config.hermesCommandDelayMs);
+
         // ---- Ollama через консоль (subprocess `ollama run`) ----
         ollamaService = new OllamaProcessService(
                 config.ollamaBinary,
@@ -111,7 +120,7 @@ public class FileServer {
         server.createContext("/",            rootHandler);
         server.createContext("/api/console", new ConsoleHandler());
         server.createContext("/api/gpu",     new GpuHandler());
-        server.createContext("/api/ollama",  new OllamaHandler(ollamaService));  // ← ИЗМЕНЕНО
+        server.createContext("/api/ollama",  new OllamaHandler(ollamaService));
         server.createContext("/api/proxy",   ex -> ProxyHandler.handle(ex));
 
         server.setExecutor(Executors.newFixedThreadPool(16));
@@ -136,6 +145,9 @@ public class FileServer {
         System.out.println("  shares   : " + config.shares.size());
         System.out.println("  ollama   : " + config.ollamaBinary +
                 (config.ollamaEnabled ? " (via process)" : "  [DISABLED]"));
+        System.out.println("  hermes   : " + (config.hermesEnabled
+                ? ("enabled (" + config.hermesCommands.size() + " cmds)")
+                : "disabled"));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try { server.stop(0); } catch (Exception ignored) {}

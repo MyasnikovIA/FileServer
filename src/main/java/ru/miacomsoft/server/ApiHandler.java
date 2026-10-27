@@ -9,7 +9,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;   // ← ИСПРАВЛЕНО
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -237,12 +237,11 @@ public class ApiHandler implements HttpHandler {
         o.put("username", s.username == null ? JSONObject.NULL : s.username);
         if (s.user != null) {
             o.put("quotaMb", s.user.quotaMb);
-            o.put("console", s.user.consoleEnabled);   // ←
+            o.put("console", s.user.consoleEnabled);
         }
         FileServer.sendJson(ex, 200, o.toString());
     }
 
-    // Фрагмент файла ApiHandler.java (замените только метод handleInfo)
     private void handleInfo(HttpExchange ex, String method, AuthService.Session s)
             throws IOException {
         if (!"GET".equals(method)) { FileServer.sendError(ex, 405, "Method not allowed"); return; }
@@ -254,6 +253,14 @@ public class ApiHandler implements HttpHandler {
         info.put("console", s.user != null && s.user.consoleEnabled);
         info.put("videoChatEnabled", FileServer.config().videoChatEnabled);
         info.put("videoChatPort", FileServer.config().videoChatPort);
+
+        // ---- Hermes Agent ----
+        boolean hermesAvailable = FileServer.config().hermesEnabled
+                && s.user != null && s.user.consoleEnabled;
+        info.put("hermesEnabled", hermesAvailable);
+        info.put("hermesTitle",   FileServer.config().hermesTitle);
+        info.put("hermesIcon",    FileServer.config().hermesIcon);
+
         long userQuotaMb = -1;
         if (s.user != null && s.user.hasQuota()) userQuotaMb = s.user.quotaMb;
         info.put("userQuotaMb", userQuotaMb);
@@ -447,11 +454,6 @@ public class ApiHandler implements HttpHandler {
             FileServer.sendError(ex, 404, "Not a file");
             return;
         }
-        // Единый путь: и /api/read, и прямые URL
-        // (/<share>/<path> через RootHandler) теперь
-        // поддерживают HTTP Range. Это позволяет <video>
-        // и другим media-элементам буферизовать лениво и
-        // перематывать без скачивания всего файла.
         StaticHandler.serveFileWithRange(
                 ex,
                 fsPath,
@@ -494,18 +496,7 @@ public class ApiHandler implements HttpHandler {
         Path parent = r.physicalPath.getParent();
         if (parent != null && !Files.exists(parent)) Files.createDirectories(parent);
 
-        // ============================================================
         // АТОМАРНАЯ ЗАПИСЬ.
-        //
-        // Пишем во временный файл в том же каталоге, затем
-        // переименовываем (ATOMIC_MOVE) в целевой путь. Так
-        // исключается появление файлов нулевого размера, если
-        // запись оборвалась (кончилось место, упал процесс,
-        // пришёл RST и т.п.).
-        //
-        // Если ФС не поддерживает ATOMIC_MOVE (FAT32, некоторые
-        // сетевые ФС) — откатываемся к обычному move с REPLACE_EXISTING.
-        // ============================================================
         Path tempFile = Files.createTempFile(
                 parent != null ? parent : r.physicalPath.getParent(),
                 ".far-write-", ".tmp");
@@ -598,12 +589,6 @@ public class ApiHandler implements HttpHandler {
             return;
         }
 
-        // ============================================================
-        // Проверка квоты нужна ТОЛЬКО при переносе между разными шарами:
-        // размер целевой шары растёт, исходной — уменьшается.
-        // При переносе внутри одной шары (переименование) итоговый
-        // размер не меняется, проверка не нужна.
-        // ============================================================
         if (rf.share != rt.share) {
             long srcSize = FileService.sizeOf(rf.physicalPath);
             FileServer.quota().checkWriteQuota(rt.share, s, srcSize);
@@ -643,11 +628,6 @@ public class ApiHandler implements HttpHandler {
             return;
         }
 
-        // ============================================================
-        // Проверка квоты. При копировании размер ЦЕЛЕВОГО share растёт
-        // на весь размер источника (даже если шары совпадают — копия
-        // добавляет srcSize байт сверх уже занятого).
-        // ============================================================
         long srcSize = FileService.sizeOf(rf.physicalPath);
         FileServer.quota().checkWriteQuota(rt.share, s, srcSize);
 

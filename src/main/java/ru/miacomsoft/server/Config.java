@@ -26,6 +26,16 @@ public class Config {
     public long consoleTimeoutSec = 300;
     public long consoleMaxOutputBytes = 1024 * 1024;
 
+    // ---- Hermes Agent (профиль консоли) ----
+    public boolean hermesEnabled = false;
+    public String hermesTitle = "Hermes Agent";
+    public String hermesIcon  = "☤";
+    public String hermesShell = "";
+    public String hermesCwd   = "";
+    public List<String> hermesCommands = new ArrayList<>();
+    public long hermesStartupDelayMs = 800;
+    public long hermesCommandDelayMs = 300;
+
     public boolean videoChatEnabled = false;
     public int videoChatPort = 8081;
     public String wsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -113,6 +123,26 @@ public class Config {
             cfg.consoleCwd = console.optString("cwd", "");
             cfg.consoleTimeoutSec = console.optLong("timeoutSec", 300);
             cfg.consoleMaxOutputBytes = console.optLong("maxOutputBytes", 1024 * 1024);
+        }
+
+        // ---- Hermes Agent ----
+        JSONObject hermes = root.optJSONObject("hermes");
+        if (hermes != null) {
+            cfg.hermesEnabled = hermes.optBoolean("enabled", false);
+            cfg.hermesTitle   = hermes.optString("title", "Hermes Agent").trim();
+            cfg.hermesIcon    = hermes.optString("icon",  "☤").trim();
+            cfg.hermesShell   = hermes.optString("shell", "").trim();
+            cfg.hermesCwd     = hermes.optString("cwd",   "").trim();
+            cfg.hermesStartupDelayMs = hermes.optLong("startupDelayMs", 800);
+            cfg.hermesCommandDelayMs = hermes.optLong("commandDelayMs", 300);
+
+            JSONArray cmds = hermes.optJSONArray("commands");
+            if (cmds != null) {
+                for (int i = 0; i < cmds.length(); i++) {
+                    String c = cmds.optString(i, "").trim();
+                    if (!c.isEmpty()) cfg.hermesCommands.add(c);
+                }
+            }
         }
 
         JSONObject vc = root.optJSONObject("videochat");

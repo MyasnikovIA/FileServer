@@ -163,12 +163,40 @@ FAR.connectToDb = async function (cfg) {
     FAR.videoChatEnabled = !!info.videoChatEnabled;
     FAR.videoChatPort = (typeof info.videoChatPort === 'number' && info.videoChatPort > 0) ? info.videoChatPort : 8081;
 
+    // ---- Hermes Agent (профиль консоли) ----
+    FAR.hermesEnabled = !!info.hermesEnabled;
+    FAR.hermesTitle   = info.hermesTitle || 'Hermes Agent';
+    FAR.hermesIcon    = info.hermesIcon  || '☤';
+
     if (!usedProxy) FAR.registerServer(actualUrl);
 
     if (FAR.consoleEnabled && typeof FAR.WM !== 'undefined' && typeof FAR.WM.registerConsoleApp === 'function') {
         FAR.WM.registerConsoleApp();
     } else if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.unregisterConsoleApp === 'function') {
         FAR.WM.unregisterConsoleApp();
+    }
+
+    // ---- Hermes: регистрация WM-приложения ----
+    if (typeof FAR.WM !== 'undefined') {
+        if (FAR.hermesEnabled && typeof FAR.WM.registerHermesApp === 'function') {
+            try { FAR.WM.registerHermesApp(); } catch (e) { /* ignore */ }
+            // Обновить иконки рабочего стола, если WM уже активен
+            if (FAR.WM.state && FAR.WM.state.active
+                && typeof FAR.WM._scheduleDesktopRender === 'function') {
+                try { FAR.WM._scheduleDesktopRender(); } catch (e) { /* ignore */ }
+            }
+        } else if (typeof FAR.WM.unregisterHermesApp === 'function') {
+            try { FAR.WM.unregisterHermesApp(); } catch (e) { /* ignore */ }
+            if (FAR.WM.state && FAR.WM.state.active
+                && typeof FAR.WM._scheduleDesktopRender === 'function') {
+                try { FAR.WM._scheduleDesktopRender(); } catch (e) { /* ignore */ }
+            }
+        }
+    }
+
+    // Обновить видимость кнопки «Hermes Agent» в тулбаре
+    if (typeof FAR._updateHermesButton === 'function') {
+        try { FAR._updateHermesButton(); } catch (e) { /* ignore */ }
     }
 
     await client.allDocs({ limit: 1 });

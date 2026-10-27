@@ -27,6 +27,11 @@ FAR.updateAuthUI = function() {
         btnConsole.style.display = FAR.consoleEnabled ? '' : 'none';
     }
 
+    // ---- Кнопка «Hermes Agent» (профиль консоли) ----
+    if (typeof FAR._updateHermesButton === 'function') {
+        try { FAR._updateHermesButton(); } catch (e) { /* ignore */ }
+    }
+
     // ---- Кнопки VideoChat (просмотр и вещание) — если включены на сервере ----
     const btnVideoChat = document.getElementById('btnVideoChat');
     if (btnVideoChat) {
@@ -71,6 +76,17 @@ FAR.onAuthButton = function () {
         FAR.consoleEnabled = false;
         if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.unregisterConsoleApp === 'function') {
             try { FAR.WM.unregisterConsoleApp(); } catch (e) {}
+        }
+
+        // ---- Снимаем флаг Hermes ----
+        FAR.hermesEnabled = false;
+        FAR.hermesTitle = 'Hermes Agent';
+        FAR.hermesIcon = '☤';
+        if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.unregisterHermesApp === 'function') {
+            try { FAR.WM.unregisterHermesApp(); } catch (e) {}
+        }
+        if (typeof FAR._updateHermesButton === 'function') {
+            try { FAR._updateHermesButton(); } catch (e) {}
         }
 
         // ---- Снимаем флаги VideoChat ----

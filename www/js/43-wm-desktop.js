@@ -22,9 +22,11 @@ FAR.WM.DESKTOP_DEFAULT = [
 // Условные приложения
 FAR.WM.DESKTOP_CONDITIONAL = [
     { id: 'console',     x: 240, y: 240 },
+    { id: 'hermes',      x: 240, y: 460 },
     { id: 'videochat',   x: 240, y: 350 },
     { id: 'broadcaster', x: 350, y: 20  }
 ];
+
 
 FAR.WM._loadDesktopIcons = function () {
     try {

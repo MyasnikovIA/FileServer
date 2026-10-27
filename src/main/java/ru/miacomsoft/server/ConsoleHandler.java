@@ -32,6 +32,10 @@ public class ConsoleHandler implements HttpHandler {
             handleInput(ex);
         } else if ("/api/console/resize".equals(path)) {
             handleResize(ex);
+        } else if ("/api/console/hermes".equals(path)) {
+            handleHermesStart(ex);
+        } else if ("/api/console/hermes/status".equals(path)) {
+            handleHermesStatus(ex);
         } else {
             FileServer.sendError(ex, 404, "Unknown console endpoint: " + path);
         }
@@ -244,5 +248,63 @@ public class ConsoleHandler implements HttpHandler {
         JSONObject ok = new JSONObject();
         ok.put("ok", true);
         FileServer.sendJson(ex, 200, ok.toString());
+    }
+
+    // ============================================================
+    // /api/console/hermes — запуск профиля Hermes
+    // ============================================================
+
+    private void handleHermesStart(HttpExchange ex) throws IOException {
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            FileServer.sendError(ex, 405, "Method not allowed");
+            return;
+        }
+        AuthService.Session s = auth(ex);
+        if (s == null) return;
+
+        Config cfg = FileServer.config();
+        if (cfg == null || !cfg.hermesEnabled) {
+            FileServer.sendError(ex, 503, "Hermes module disabled");
+            return;
+        }
+
+        String sessionId = getSessionId(ex, true);
+        String key = s.username + "_" + sessionId;
+
+        FileServer.console().startHermes(key);
+
+        JSONObject resp = new JSONObject();
+        resp.put("ok", true);
+        resp.put("sessionId", sessionId);
+        resp.put("commands", FileServer.console().getHermesCommands().size());
+        FileServer.sendJson(ex, 200, resp.toString());
+    }
+
+    // ============================================================
+    // /api/console/hermes/status
+    // ============================================================
+
+    private void handleHermesStatus(HttpExchange ex) throws IOException {
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            FileServer.sendError(ex, 405, "Method not allowed");
+            return;
+        }
+        AuthService.Session s = FileServer.auth().authenticate(ex);
+        if (s == null) {
+            FileServer.sendError(ex, 401, "Unauthorized");
+            return;
+        }
+
+        Config cfg = FileServer.config();
+        boolean enabled    = cfg != null && cfg.hermesEnabled;
+        boolean userCanUse = s.user != null && s.user.consoleEnabled;
+
+        JSONObject resp = new JSONObject();
+        resp.put("enabled",    enabled);
+        resp.put("userCanUse", userCanUse);
+        resp.put("title",      cfg != null ? cfg.hermesTitle : "Hermes Agent");
+        resp.put("icon",       cfg != null ? cfg.hermesIcon  : "☤");
+        resp.put("commands",   cfg != null ? cfg.hermesCommands.size() : 0);
+        FileServer.sendJson(ex, 200, resp.toString());
     }
 }

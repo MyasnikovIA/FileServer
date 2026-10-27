@@ -71,12 +71,14 @@ FAR.openConsole = function (opts) {
 FAR._openConsoleModal = function () {
     const modal = document.getElementById('consoleModal');
     const host  = document.getElementById('consoleModalHost');
+    const title = document.getElementById('consoleModalTitle');
     if (!modal || !host) return;
 
     if (FAR._consoleModalApi) {
         try { FAR._consoleModalApi.destroy(); } catch (e) {}
         FAR._consoleModalApi = null;
     }
+    if (title) title.textContent = '🖥 Console';
 
     FAR._consoleModalApi = FAR._createConsole(host, {});
     modal.classList.remove('hidden');
@@ -93,6 +95,52 @@ FAR.closeConsole = function () {
 
 FAR.closeConsoleOutside = function (e) {
     if (e.target === e.currentTarget) FAR.closeConsole();
+};
+
+// ============================================================
+// Hermes Agent — публичное API
+// ============================================================
+
+FAR.openHermesConsole = function (opts) {
+    opts = opts || {};
+    if (!FAR.consoleEnabled) {
+        FAR.toast('Console недоступен для этого пользователя', 'warning');
+        return;
+    }
+    if (!FAR.hermesEnabled) {
+        FAR.toast('Модуль Hermes отключён на сервере', 'warning');
+        return;
+    }
+
+    if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active
+        && FAR.WM.getApp && FAR.WM.getApp('hermes')) {
+        return FAR.WM.openApp('hermes');
+    }
+
+    FAR._openHermesConsoleModal();
+};
+
+FAR._openHermesConsoleModal = function () {
+    const modal = document.getElementById('consoleModal');
+    const host  = document.getElementById('consoleModalHost');
+    const title = document.getElementById('consoleModalTitle');
+    if (!modal || !host) {
+        console.error('[Hermes] #consoleModal или #consoleModalHost не найден');
+        FAR.toast('Модалка консоли не найдена', 'error');
+        return;
+    }
+
+    if (FAR._consoleModalApi) {
+        try { FAR._consoleModalApi.destroy(); } catch (e) {}
+        FAR._consoleModalApi = null;
+    }
+
+    if (title) {
+        title.textContent = (FAR.hermesIcon || '☤') + ' ' + (FAR.hermesTitle || 'Hermes Agent');
+    }
+
+    FAR._consoleModalApi = FAR._createConsole(host, { profile: 'hermes' });
+    modal.classList.remove('hidden');
 };
 
 // ============================================================
@@ -134,6 +182,10 @@ FAR._consoleResolveToken = function () {
 
 FAR._createConsole = function (hostEl, opts) {
     if (!hostEl) throw new Error('_createConsole: hostEl required');
+    opts = opts || {};
+
+    // Профиль: null (обычная консоль) или 'hermes' (профиль Hermes).
+    const profile = opts.profile || null;
 
     hostEl.innerHTML =
         '<div class="console-toolbar">' +
@@ -215,7 +267,8 @@ FAR._createConsole = function (hostEl, opts) {
             requestAnimationFrame(() => {
                 doFit();
                 term.focus();
-                connect();
+                if (profile === 'hermes') startHermesProfile();
+                else                      connect();
             });
         });
 
@@ -274,6 +327,45 @@ FAR._createConsole = function (hostEl, opts) {
     }
 
     // ============================================================
+    // Hermes: запуск профиля (без SSE-подключения)
+    // ============================================================
+
+    async function startHermesProfile() {
+        const baseUrl = FAR._consoleResolveBaseUrl();
+        const token = FAR._consoleResolveToken();
+        if (!token) {
+            setStatus('Нет токена', 'error');
+            if (term) term.writeln('\x1b[31m✗ Не авторизован.\x1b[0m');
+            return;
+        }
+
+        setStatus('Запуск профиля…', 'loading');
+
+        try {
+            const res = await fetch(
+                baseUrl + '/api/console/hermes?sessionId=' + encodeURIComponent(sessionId),
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include'
+                }
+            );
+            if (!res.ok) {
+                const t = await res.text();
+                throw new Error('HTTP ' + res.status + (t ? ': ' + t : ''));
+            }
+            // Теперь подключаемся к SSE, чтобы получать вывод
+            connect();
+        } catch (e) {
+            setStatus('Ошибка запуска: ' + e.message, 'error');
+            if (term) term.writeln('\x1b[31m✗ ' + e.message + '\x1b[0m');
+        }
+    }
+
+    // ============================================================
     // SSE + fallback-поллинг
     // ============================================================
 
@@ -307,8 +399,6 @@ FAR._createConsole = function (hostEl, opts) {
 
         S.es = es;
 
-        // Таймаут: если за 5 секунд не пришёл `ready` — значит SSE
-        // молча не открылся (mixed content / TLS). Переходим на polling.
         sseConnectTimer = setTimeout(function () {
             if (sseOpenedOk) return;
             if (S.destroyed) return;
@@ -510,3 +600,108 @@ FAR.WM.unregisterConsoleApp = function () {
             });
     }
 };
+
+// ============================================================
+// Hermes Agent — WM-приложение
+// ============================================================
+
+FAR.WM.registerHermesApp = function () {
+    if (typeof FAR.WM === 'undefined' || typeof FAR.WM.registerApp !== 'function') return;
+    if (FAR.WM.getApp && FAR.WM.getApp('hermes')) return;
+
+    FAR.WM.registerApp({
+        id: 'hermes',
+        title: FAR.hermesTitle || 'Hermes Agent',
+        icon:  FAR.hermesIcon  || '☤',
+        keywords: 'hermes agent ai console cli terminal llm',
+        singleton: false,
+        width: 1000,
+        height: 720,
+        open: async function (win, props) {
+            const titleEl = win.el.querySelector('.wm-title-text');
+            if (titleEl) {
+                titleEl.textContent =
+                    (FAR.hermesIcon || '☤') + ' ' + (FAR.hermesTitle || 'Hermes Agent');
+            }
+
+            win.bodyEl.innerHTML = '';
+            win.bodyEl.style.display = 'flex';
+            win.bodyEl.style.flexDirection = 'column';
+            win.bodyEl.style.minHeight = '0';
+
+            if (win.props._consoleApi) {
+                try { win.props._consoleApi.destroy(); } catch (e) {}
+                win.props._consoleApi = null;
+            }
+
+            win.props._consoleApi = FAR._createConsole(win.bodyEl, { profile: 'hermes' });
+        },
+        onClose: function (win) {
+            if (win.props && win.props._consoleApi) {
+                try { win.props._consoleApi.destroy(); } catch (e) {}
+                win.props._consoleApi = null;
+            }
+        }
+    });
+};
+
+FAR.WM.unregisterHermesApp = function () {
+    if (FAR.WM._apps && FAR.WM._apps['hermes']) delete FAR.WM._apps['hermes'];
+    if (FAR.WM.state && FAR.WM.state.windows) {
+        FAR.WM.state.windows
+            .filter(w => w.appId === 'hermes')
+            .forEach(w => {
+                try { FAR.WM.closeWindow(w.id, true); } catch (e) {}
+            });
+    }
+};
+
+// ============================================================
+// Кнопка «Hermes Agent» в тулбаре
+// ============================================================
+
+FAR._installHermesToolbarButton = function () {
+    const toolbar = document.querySelector('.toolbar');
+    if (!toolbar) return;
+    if (document.getElementById('btnHermes')) {
+        FAR._updateHermesButton();
+        return;
+    }
+
+    const btn = document.createElement('button');
+    btn.id = 'btnHermes';
+    btn.type = 'button';
+    btn.textContent = (FAR.hermesIcon || '☤') + ' ' + (FAR.hermesTitle || 'Hermes');
+    btn.title = 'Запустить Hermes Agent в консоли';
+    btn.style.display = 'none';
+    btn.addEventListener('click', function () { FAR.openHermesConsole(); });
+
+    // Вставляем сразу после кнопки «🖥️ Консоль», если она есть
+    const consoleBtn = document.getElementById('btnConsole');
+    if (consoleBtn && consoleBtn.parentNode === toolbar) {
+        toolbar.insertBefore(btn, consoleBtn.nextSibling);
+    } else {
+        // Иначе — перед кнопкой «🔐 LogIn», если она есть
+        const authBtn = document.getElementById('btnAuth');
+        if (authBtn && authBtn.parentNode === toolbar) {
+            toolbar.insertBefore(btn, authBtn);
+        } else {
+            toolbar.appendChild(btn);
+        }
+    }
+
+    FAR._updateHermesButton();
+};
+
+FAR._updateHermesButton = function () {
+    const btn = document.getElementById('btnHermes');
+    if (!btn) return;
+    btn.textContent = (FAR.hermesIcon || '☤') + ' ' + (FAR.hermesTitle || 'Hermes');
+    btn.style.display = (FAR.consoleEnabled && FAR.hermesEnabled) ? '' : 'none';
+};
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', FAR._installHermesToolbarButton);
+} else {
+    FAR._installHermesToolbarButton();
+}

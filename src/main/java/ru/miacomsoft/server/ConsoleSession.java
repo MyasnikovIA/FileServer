@@ -94,6 +94,43 @@ public class ConsoleSession {
         startReaderThread();
     }
 
+    /**
+     * Отправляет набор команд в shell как начальный ввод.
+     * Используется профилями (например, Hermes Agent).
+     *
+     * Работает в отдельном daemon-потоке, не блокирует вызывающего.
+     */
+    public void sendInitialCommands(final List<String> commands,
+                                    final long startupDelayMs,
+                                    final long commandDelayMs) {
+        if (commands == null || commands.isEmpty()) return;
+        final List<String> copy = List.copyOf(commands);
+
+        Thread t = new Thread(() -> {
+            try {
+                if (startupDelayMs > 0) Thread.sleep(startupDelayMs);
+
+                for (String cmd : copy) {
+                    if (closed) return;
+                    OutputStream out = stdin;
+                    if (out == null) return;
+
+                    out.write((cmd + "\n").getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                    lastActivity.set(System.currentTimeMillis());
+
+                    if (commandDelayMs > 0) Thread.sleep(commandDelayMs);
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (IOException e) {
+                System.err.println("[ConsoleSession] sendInitialCommands: " + e.getMessage());
+            }
+        }, "InitialCommands-" + System.identityHashCode(this));
+        t.setDaemon(true);
+        t.start();
+    }
+
     private void startReaderThread() {
         Thread t = new Thread(() -> {
             byte[] buffer = new byte[8192];
