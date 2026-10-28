@@ -403,7 +403,170 @@ FAR.WM._explorerNavigate = async function (win, side, targetPath) {
     await FAR.renderPanel(side);
 };
 
+// ============================================================
+// Вложенное подменю контекстного меню WM
+// ============================================================
+
+FAR.WM._addCtxSubmenu = function (menu, label, items) {
+    items = Array.isArray(items) ? items : [];
+
+    const anyEnabled = items.some(function (it) {
+        return it && !it.sep && it.enabled;
+    });
+
+    const row = document.createElement('div');
+    row.className = 'wm-ctx-item wm-ctx-has-submenu' +
+        (anyEnabled ? '' : ' disabled');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.justifyContent = 'space-between';
+    row.style.gap = '10px';
+    row.style.width = '100%';
+    row.style.boxSizing = 'border-box';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label || '';
+
+    const arrowSpan = document.createElement('span');
+    arrowSpan.textContent = '›';
+    arrowSpan.style.cssText =
+        'color:#6c7086;font-size:16px;line-height:1;' +
+        'margin-left:auto;flex-shrink:0;';
+
+    row.appendChild(labelSpan);
+    row.appendChild(arrowSpan);
+
+    const sub = document.createElement('div');
+    sub.className = 'wm-ctx-submenu-popup';
+    sub.style.cssText =
+        'position:fixed;display:none;min-width:220px;' +
+        'background:rgba(20,24,36,0.98);' +
+        'border:1px solid #2b2b3c;border-radius:6px;' +
+        'box-shadow:0 12px 32px rgba(0,0,0,0.7);' +
+        'backdrop-filter:blur(18px);' +
+        'padding:6px;z-index:100000;' +
+        'font-size:12px;color:#e6e6e6;' +
+        'font-family:\'Segoe UI\',Arial,sans-serif;' +
+        'user-select:none;';
+
+    items.forEach(function (it) {
+        if (!it || it.sep) {
+            const s = document.createElement('div');
+            s.className = 'wm-ctx-sep';
+            sub.appendChild(s);
+            return;
+        }
+
+        const item = document.createElement('div');
+        item.className = 'wm-ctx-item' + (it.enabled ? '' : ' disabled');
+        item.textContent = it.label;
+        item.style.display = 'block';
+        item.style.padding = '7px 12px';
+
+        if (it.enabled && typeof it.action === 'function') {
+            const fireAction = function (ev) {
+                if (ev) {
+                    try { ev.stopPropagation(); } catch (e) {}
+                    try { ev.preventDefault(); } catch (e) {}
+                }
+                FAR.WM._hideContextMenu();
+                setTimeout(function () {
+                    try { it.action(); }
+                    catch (e) {
+                        console.error('[ctx submenu]', e);
+                        FAR.toast('Ошибка: ' + e.message, 'error');
+                    }
+                }, 0);
+            };
+
+            item.addEventListener('pointerdown', fireAction);
+            if (typeof window.PointerEvent === 'undefined') {
+                item.addEventListener('click', fireAction);
+            }
+        }
+
+        sub.appendChild(item);
+    });
+
+    document.body.appendChild(sub);
+
+    let hideTimer = null;
+
+    const hideSub = function () {
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(function () {
+            sub.style.display = 'none';
+            hideTimer = null;
+        }, 200);
+    };
+
+    const showSub = function () {
+        if (hideTimer) {
+            clearTimeout(hideTimer);
+            hideTimer = null;
+        }
+        if (row.classList.contains('disabled')) return;
+
+        sub.style.display = 'block';
+        sub.style.left = '-99999px';
+        sub.style.top = '-99999px';
+
+        const rect = row.getBoundingClientRect();
+        const subRect = sub.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        let left = rect.right + 2;
+        if (left + subRect.width > vw - 4) {
+            left = rect.left - subRect.width - 2;
+            if (left < 4) left = 4;
+        }
+
+        let top = rect.top - 4;
+        if (top + subRect.height > vh - 4) {
+            top = vh - subRect.height - 4;
+        }
+        if (top < 4) top = 4;
+
+        sub.style.left = left + 'px';
+        sub.style.top  = top + 'px';
+    };
+
+    row.addEventListener('mouseenter', showSub);
+    row.addEventListener('mouseleave', hideSub);
+
+    row.addEventListener('click', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (sub.style.display === 'block') {
+            sub.style.display = 'none';
+        } else {
+            showSub();
+        }
+    });
+
+    sub.addEventListener('mouseenter', showSub);
+    sub.addEventListener('mouseleave', hideSub);
+
+    sub.addEventListener('mousedown', function(e) {
+        e.stopPropagation();
+    });
+
+    row._farSubmenu = sub;
+
+    menu.appendChild(row);
+    return row;
+};
+
+// ============================================================
+// Контекстное меню Проводника
+// ============================================================
+
 FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
+    document.querySelectorAll('.wm-ctx-submenu-popup').forEach(function (s) {
+        try { s.remove(); } catch (e) {}
+    });
+
     const menu = document.getElementById('wmContextMenu');
     if (!menu) return;
 
@@ -435,6 +598,10 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
         menu.appendChild(s);
     };
 
+    const addSubmenu = function (label, items) {
+        return FAR.WM._addCtxSubmenu(menu, label, items);
+    };
+
     const withSide = function (fn) {
         return function () {
             const prevActive = FAR.activePanel;
@@ -456,10 +623,7 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
     const isText = isFile && typeof FAR.isTextFile === 'function' && FAR.isTextFile(selectedItem);
 
     // ============================================================
-    // «Открыть» (эмуляция Enter) — работает и на файлах, и на папках.
-    // Необходимо для мобильных устройств, где нет физической клавиши Enter.
-    // Берёт текущий курсор, а если ничего не выделено — открывает
-    // родительский каталог (эквивалент Enter на «..»).
+    // «Открыть» (эмуляция Enter) — остаётся в главном меню
     // ============================================================
     add('📂 Открыть', hasDb, withSide(function () {
         const c = FAR.side[side];
@@ -477,20 +641,62 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
         }
     }));
 
+    // ============================================================
+    // «Открыть как» — вложенное подменю.
+    // ============================================================
+    addSubmenu('📂 Открыть как', [
+        {
+            label: '📑 Открыть приложение в новом окне',
+            enabled: hasDb && isFile,
+            action: withSide(function () {
+                const it = getSelectedItem();
+                if (!it) return;
+                if (typeof FAR.OpenInTab === 'undefined' ||
+                    typeof FAR.OpenInTab.open !== 'function') {
+                    FAR.toast('Модуль "Открыть в новой вкладке" не загружен', 'error');
+                    return;
+                }
+                FAR.OpenInTab.open(it, side);
+            })
+        },
+        {
+            label: '🪟 Открыть в новом окне',
+            enabled: hasDb && isFile,
+            action: withSide(function () {
+                const it = getSelectedItem();
+                if (it) FAR.openFileInNewWindow(it, side);
+            })
+        },
+        { sep: true },
+        {
+            label: '📝 Редактировать (Notepad++)',
+            enabled: hasDb && isText,
+            action: withSide(function () {
+                const it = getSelectedItem();
+                if (it) FAR.WM.openApp('texteditor', { props: { file: it, side: side } });
+            })
+        },
+        {
+            label: '🌐 Открыть в браузере',
+            enabled: hasDb && isHtml,
+            action: withSide(function () {
+                const it = getSelectedItem();
+                if (it) FAR.openBrowserFromItem(it, side);
+            })
+        }
+    ]);
+
+    // ============================================================
+    // Загрузка / создание
+    // ============================================================
     add('📤 Загрузить',     hasDb, withSide(function () { FAR.uploadFile(); }));
     add('📁 Создать папку', hasDb, withSide(function () { FAR.createFolder(); }));
-    add('📝 Редактировать (Notepad++)', hasDb && isText, withSide(function () {
-        const it = getSelectedItem(); if (it) FAR.WM.openApp('texteditor', { props: { file: it, side: side } });
-    }));
-    add('🌐 Открыть в браузере', hasDb && isHtml, withSide(function () {
-        const it = getSelectedItem(); if (it) FAR.openBrowserFromItem(it, side);
-    }));
-    add('🪟 Открыть в новом окне', hasDb && isFile, withSide(function () {
-        const it = getSelectedItem(); if (it) FAR.openFileInNewWindow(it, side);
-    }));
 
     addSep();
 
+    // ============================================================
+    // Операции с выделением
+    // ============================================================
     add('📋 Копировать',    hasDb && selCount > 0, withSide(function () { FAR.copySelected(); }));
     add('✂️ Перенести',      hasDb && selCount > 0, withSide(function () { FAR.moveSelected(); }));
     add('📥 Скачать',       hasDb && selCount > 0, withSide(function () { FAR.downloadSelectedUncompressed(); }));
@@ -499,12 +705,19 @@ FAR.WM._showExplorerContextMenu = function (x, y, win, side) {
 
     addSep();
 
+    // ============================================================
+    // Навигация
+    // ============================================================
     add('🔄 Обновить',      hasDb, withSide(function () { FAR.reloadPanel(side); }));
     add('⬆ Вверх',          true,  withSide(function () { FAR.navigatePanel(side, '..'); }));
     add('🏠 В корень',      true,  withSide(function () { FAR.navigatePanel(side, '/'); }));
 
     FAR.WM._positionContextMenu(menu, x, y);
 };
+
+// ============================================================
+// Прочее: клонирование панели, диалог подключения
+// ============================================================
 
 FAR.WM._cloneFarPanelInto = function (host, side) {
     const origListId = side === 'left' ? 'listLeft' : 'listRight';
@@ -622,3 +835,22 @@ FAR.WM._mountSideConnUI = function (win, side) {
         FAR.WM.closeWindow(win.id);
     };
 };
+
+// ============================================================
+// Хук очистки: при закрытии контекстного меню удаляем подменю
+// ============================================================
+
+(function installCtxSubmenuCleanup() {
+    if (FAR.WM._ctxSubmenuCleanupInstalled) return;
+    FAR.WM._ctxSubmenuCleanupInstalled = true;
+
+    const origHide = FAR.WM._hideContextMenu;
+    FAR.WM._hideContextMenu = function () {
+        document.querySelectorAll('.wm-ctx-submenu-popup').forEach(function (s) {
+            try { s.remove(); } catch (e) {}
+        });
+        if (typeof origHide === 'function') {
+            return origHide.apply(this, arguments);
+        }
+    };
+})();

@@ -554,6 +554,51 @@
     margin: 4px 6px;
 }
 
+/* ============================================================
+   Стили для вложенного подменю контекстного меню WM
+   ============================================================ */
+.wm-ctx-submenu-popup {
+    position: fixed;
+    display: none;
+    min-width: 220px;
+    background: rgba(20, 24, 36, 0.98);
+    border: 1px solid #2b2b3c;
+    border-radius: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(18px);
+    padding: 6px;
+    z-index: 100000;
+    font-size: 12px;
+    color: #e6e6e6;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    user-select: none;
+}
+
+.wm-ctx-submenu-popup .wm-ctx-item {
+    display: block;
+    padding: 7px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.wm-ctx-submenu-popup .wm-ctx-item:hover {
+    background: rgba(74, 163, 255, 0.2);
+}
+
+.wm-ctx-submenu-popup .wm-ctx-item.disabled {
+    color: #6c7086;
+    cursor: not-allowed;
+    pointer-events: none;
+    opacity: 0.55;
+}
+
+.wm-ctx-submenu-popup .wm-ctx-sep {
+    height: 1px;
+    background: #2b2b3c;
+    margin: 4px 6px;
+}
+
 /* ==== Общие стили для контента внутри окон ==== */
 .wm-body .modal-body {
     overflow-y: auto;
