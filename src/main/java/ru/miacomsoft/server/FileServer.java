@@ -39,6 +39,7 @@ public class FileServer {
     private static FileWatcher fileWatcher;
     private static Path webRoot;
     private static ConsoleService consoleService;
+    private static ServerCopyService serverCopy;
     private static VideoChatServer videoChatServer;
     private static OllamaProcessService ollamaService;
 
@@ -75,6 +76,7 @@ public class FileServer {
         tokens = new TokenService();
         auth   = new AuthService(config, tokens);
         quota  = new QuotaService(auth);
+        serverCopy = new ServerCopyService();
 
         consoleService = new ConsoleService(
                 config.consoleShell,
@@ -153,6 +155,7 @@ public class FileServer {
             try { server.stop(0); } catch (Exception ignored) {}
             try { if (fileWatcher != null) fileWatcher.stop(); } catch (Exception ignored) {}
             try { if (videoChatServer != null) videoChatServer.stop(); } catch (Exception ignored) {}
+            try { if (serverCopy != null) serverCopy.shutdown(); } catch (Exception ignored) {}
             for (SseConnection c : sseClients.values()) c.close();
         }));
     }
@@ -214,6 +217,7 @@ public class FileServer {
     static RootHandler rootHandler() { return rootHandler; }
     static StaticHandler staticHandler() { return staticHandler; }
     static OllamaProcessService ollama() { return ollamaService; }
+    static ServerCopyService serverCopy() { return serverCopy; }
 
     static void broadcastEvent(String event, String data) {
         for (Map.Entry<String, SseConnection> e : sseClients.entrySet()) {
