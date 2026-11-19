@@ -1,4 +1,3 @@
-cat > uninstall-autostart.sh <<'SCRIPT_EOF'
 #!/bin/bash
 # =============================================================
 # uninstall-autostart.sh
@@ -26,6 +25,3 @@ sudo systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
 echo ""
 echo "Готово. Сервис удалён из автозапуска."
 echo "Логи остаются в journalctl (journalctl --vacuum-time=1d — очистить)."
-SCRIPT_EOF
-
-chmod +x uninstall-autostart.sh

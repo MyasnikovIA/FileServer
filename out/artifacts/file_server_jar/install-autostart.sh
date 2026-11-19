@@ -1,4 +1,3 @@
-cat > install-autostart.sh <<'SCRIPT_EOF'
 #!/bin/bash
 # =============================================================
 # install-autostart.sh
@@ -8,7 +7,7 @@ cat > install-autostart.sh <<'SCRIPT_EOF'
 set -e
 
 SERVICE_NAME="file-server"
-APP_DIR="/home/myasnikovia/JavaProject/FileServer_git/out/artifacts/file_server_jar"
+APP_DIR="/var/JavaProject/FileServer_git"
 JAR_FILE="file-server.jar"
 SERVICE_USER="myasnikovia"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -74,6 +73,3 @@ echo "Готово."
 echo "  Проверить логи : journalctl -u ${SERVICE_NAME} -f"
 echo "  Перезапустить  : sudo systemctl restart ${SERVICE_NAME}"
 echo "  Остановить     : sudo systemctl stop ${SERVICE_NAME}"
-SCRIPT_EOF
-
-chmod +x install-autostart.sh
