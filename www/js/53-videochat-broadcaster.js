@@ -162,11 +162,28 @@ FAR.Broadcaster.startNative = function (room, source) {
     room = String(room || 'main').trim() || 'main';
     source = source || 'camera';
 
-    const wsPort = FAR.videoChatPort || 8081;
-    const host = location.hostname;
-    // Определяем протокол: wss для HTTPS, ws для HTTP
-    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = wsProto + '//' + host + ':' + wsPort + '/ws/publish?room=' + encodeURIComponent(room);
+    // ============================================================
+    // URL WebSocket-публикатора.
+    //
+    // Если работаем за nginx с subpath (/file/) — идём через тот же
+    // origin+basePath; nginx должен проксировать /file/ws/ на
+    // VideoChatServer :8081 (см. location /file/ws/ в nginx.conf).
+    //
+    // Иначе — прямое подключение к отдельному порту VideoChatServer
+    // (прямое подключение к http(s)://host:8081/index.html).
+    // ============================================================
+    let wsUrl;
+    const basePath = (typeof FAR.basePath === 'string') ? FAR.basePath : '';
+    if (basePath) {
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = wsProto + '//' + location.host + basePath +
+            '/ws/publish?room=' + encodeURIComponent(room);
+    } else {
+        const wsPort = FAR.videoChatPort || 8081;
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = wsProto + '//' + location.hostname + ':' + wsPort +
+            '/ws/publish?room=' + encodeURIComponent(room);
+    }
 
     const popup = window.open('', 'broadcaster_native', 'width=640,height=480,menubar=no,toolbar=no,location=no,status=no');
     if (!popup) {

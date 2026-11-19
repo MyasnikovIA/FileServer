@@ -154,16 +154,18 @@ FAR._consoleResolveBaseUrl = function () {
     if (ctx && ctx.db && ctx.db.baseUrl) {
         base = String(ctx.db.baseUrl).replace(/\/+$/, '');
     } else {
-        base = location.origin;
+        // Раньше здесь был просто location.origin — терялся базовый путь (/file).
+        // Теперь: origin + базовый путь, вычисленный из текущего URL.
+        base = location.origin + (FAR.basePath || '');
     }
 
     // Если страница HTTPS, а baseUrl HTTP — это mixed content.
     // EventSource будет заблокирован браузером МОЛЧА.
-    // Заменяем на текущий origin (он точно HTTPS).
+    // Заменяем на текущий origin + basePath.
     if (location.protocol === 'https:' && base.startsWith('http://')) {
         console.warn('[console] Mixed content: baseUrl=' + base +
-            ' → заменяю на ' + location.origin);
-        base = location.origin;
+            ' → заменяю на ' + location.origin + (FAR.basePath || ''));
+        base = location.origin + (FAR.basePath || '');
     }
 
     return base;
@@ -676,12 +678,10 @@ FAR._installHermesToolbarButton = function () {
     btn.style.display = 'none';
     btn.addEventListener('click', function () { FAR.openHermesConsole(); });
 
-    // Вставляем сразу после кнопки «🖥️ Консоль», если она есть
     const consoleBtn = document.getElementById('btnConsole');
     if (consoleBtn && consoleBtn.parentNode === toolbar) {
         toolbar.insertBefore(btn, consoleBtn.nextSibling);
     } else {
-        // Иначе — перед кнопкой «🔐 LogIn», если она есть
         const authBtn = document.getElementById('btnAuth');
         if (authBtn && authBtn.parentNode === toolbar) {
             toolbar.insertBefore(btn, authBtn);

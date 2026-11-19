@@ -1,14 +1,5 @@
 package ru.miacomsoft.server;
 
-// ============================================================
-// RootHandler.java — обработчик "/".
-//
-//   1. Пробуем статику из webRoot.
-//   2. Если нет — первый сегмент как имя share.
-//   3. Если первый сегмент не share и есть root share — идём в него.
-//   4. Иначе — 404.
-// ============================================================
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
@@ -30,7 +21,12 @@ public class RootHandler implements HttpHandler {
         if (FileServer.handleOptions(ex)) return;
 
         String rawPath = ex.getRequestURI().getRawPath();
-        if (rawPath == null || rawPath.isEmpty() || "/".equals(rawPath)) {
+        if (rawPath == null || rawPath.isEmpty()) rawPath = "/";
+
+        // NEW: срезаем basePath ("/file") — дальше работаем с "внутренним" путём
+        rawPath = FileServer.stripBase(rawPath);
+
+        if ("/".equals(rawPath) || rawPath.isEmpty()) {
             rawPath = "/index.html";
         }
 

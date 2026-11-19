@@ -1,6 +1,7 @@
 package ru.miacomsoft.server;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
@@ -48,6 +49,41 @@ public class FileServer {
 
     static final Map<String, SseConnection> sseClients = new ConcurrentHashMap<>();
 
+    // ============================================================
+    // NEW: helpers для работы с basePath
+    // ============================================================
+
+    /** Возвращает текущий basePath (например "/file") или "". */
+    static String basePath() {
+        return (config != null && config.basePath != null) ? config.basePath : "";
+    }
+
+    /**
+     * Срезает basePath из начала пути.
+     *
+     *   stripBase("/file/api/login")   → "/api/login"
+     *   stripBase("/file")             → "/"
+     *   stripBase("/file/")            → "/"
+     *   stripBase("/api/login")        → "/api/login"   (не начинается с "/file")
+     *   stripBase(null)                → "/"
+     */
+    static String stripBase(String path) {
+        if (path == null) return "/";
+        String bp = basePath();
+        if (bp.isEmpty()) return path;
+
+        if (path.equals(bp)) return "/";
+        if (path.startsWith(bp + "/")) {
+            String s = path.substring(bp.length());
+            return s.isEmpty() ? "/" : s;
+        }
+        return path;
+    }
+
+    // ============================================================
+    // main
+    // ============================================================
+
     public static void main(String[] args) throws Exception {
         int port = -1;
         String host = null;
@@ -84,7 +120,6 @@ public class FileServer {
                 config.consoleTimeoutSec,
                 config.consoleMaxOutputBytes);
 
-        // ---- Hermes Agent (профиль консоли) ----
         consoleService.configureHermes(
                 config.hermesEnabled,
                 config.hermesShell,
@@ -93,7 +128,6 @@ public class FileServer {
                 config.hermesStartupDelayMs,
                 config.hermesCommandDelayMs);
 
-        // ---- Ollama через консоль (subprocess `ollama run`) ----
         ollamaService = new OllamaProcessService(
                 config.ollamaBinary,
                 config.ollamaCwd
@@ -117,13 +151,15 @@ public class FileServer {
         staticHandler = new StaticHandler(webRoot);
         rootHandler   = new RootHandler(staticHandler);
 
-        server.createContext("/api/events",  new SseHandler());
-        server.createContext("/api",         new ApiHandler());
-        server.createContext("/",            rootHandler);
-        server.createContext("/api/console", new ConsoleHandler());
-        server.createContext("/api/gpu",     new GpuHandler());
-        server.createContext("/api/ollama",  new OllamaHandler(ollamaService));
-        server.createContext("/api/proxy",   ex -> ProxyHandler.handle(ex));
+        // ============================================================
+        // NEW: регистрируем контексты под ДВУМЯ префиксами:
+        //   1) ""       — прямой доступ (без nginx / для разработки)
+        //   2) basePath — доступ за nginx (например "/file/...")
+        // ============================================================
+        registerContexts(server, "");
+        if (!config.basePath.isEmpty()) {
+            registerContexts(server, config.basePath);
+        }
 
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
@@ -142,6 +178,7 @@ public class FileServer {
         System.out.println("[FileServer] started");
         String proto = config.httpsEnabled ? "https" : "http";
         System.out.println("  listen   : " + proto + "://" + config.host + ":" + config.port);
+        System.out.println("  basePath : " + (config.basePath.isEmpty() ? "(none)" : config.basePath));
         System.out.println("  web root : " + webRoot + (Files.isDirectory(webRoot) ? "" : "  [NOT FOUND]"));
         System.out.println("  users    : " + config.users.keySet());
         System.out.println("  shares   : " + config.shares.size());
@@ -158,6 +195,24 @@ public class FileServer {
             try { if (serverCopy != null) serverCopy.shutdown(); } catch (Exception ignored) {}
             for (SseConnection c : sseClients.values()) c.close();
         }));
+    }
+
+    /**
+     * Регистрирует набор обработчиков под указанным префиксом.
+     *   registerContexts(server, "")       → /api/login, /api/list, /, ...
+     *   registerContexts(server, "/file")  → /file/api/login, /file/api/list, /file, ...
+     */
+    private static void registerContexts(HttpServer server, String prefix) {
+        server.createContext(prefix + "/api/events",  new SseHandler());
+        server.createContext(prefix + "/api",         new ApiHandler());
+        server.createContext(prefix + "/api/console", new ConsoleHandler());
+        server.createContext(prefix + "/api/gpu",     new GpuHandler());
+        server.createContext(prefix + "/api/ollama",  new OllamaHandler(ollamaService));
+        server.createContext(prefix + "/api/proxy",   ex -> ProxyHandler.handle(ex));
+
+        // rootHandler ловит всё остальное (статика, shares, /).
+        // Для пустого prefix используем "/", иначе — сам prefix.
+        server.createContext(prefix.isEmpty() ? "/" : prefix, rootHandler);
     }
 
     private static SSLContext createSSLContext() throws Exception {

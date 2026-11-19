@@ -24,7 +24,8 @@ public class ApiHandler implements HttpHandler {
     public void handle(HttpExchange ex) throws IOException {
         if (FileServer.handleOptions(ex)) return;
 
-        String path = ex.getRequestURI().getPath();
+        // NEW: срезаем basePath (например "/file" → "")
+        String path = FileServer.stripBase(ex.getRequestURI().getPath());
         String method = ex.getRequestMethod().toUpperCase();
         Map<String, String> q = FileServer.parseQuery(ex.getRequestURI().getQuery());
 

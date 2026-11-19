@@ -1,7 +1,8 @@
 {
   "http": {
     "port": 8080,
-    "host": "0.0.0.0"
+    "host": "0.0.0.0",
+    "basePath": "/file"
   },
 
   "web": "/home/myasnikovia/JavaProject/FileServer_git/www",

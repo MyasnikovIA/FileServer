@@ -313,6 +313,9 @@ public class StaticHandler implements HttpHandler {
             uriPath = "/index.html";
         }
 
+        uriPath = FileServer.stripBase(uriPath);
+        if (uriPath.isEmpty()) uriPath = "/index.html";
+
         String decoded;
         try { decoded = URLDecoder.decode(uriPath, "UTF-8"); }
         catch (Exception e) { decoded = uriPath; }

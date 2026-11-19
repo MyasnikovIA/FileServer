@@ -13,6 +13,18 @@ public class Config {
 
     public int port = 8080;
     public String host = "0.0.0.0";
+
+    /**
+     * Префикс контекста (например "/file"), под которым сервер принимает
+     * запросы. Пустая строка — работа без префикса (как раньше).
+     *
+     * Если задан, FileServer регистрирует все обработчики ДВАЖДЫ:
+     *   • /api/login, /api/list, …          (прямой доступ, для разработки)
+     *   • /file/api/login, /file/api/list, … (за nginx)
+     * и в каждом запросе срезает префикс перед маршрутизацией.
+     */
+    public String basePath = "";
+
     public String webPath = "www";
 
     public boolean httpsEnabled = false;
@@ -40,12 +52,6 @@ public class Config {
     public int videoChatPort = 8081;
     public String wsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-    // ---- Ollama (только CLI) ----
-    // enabled: включён ли модуль
-    // binary:  путь/имя CLI-утилиты `ollama` (по умолчанию "ollama")
-    // cwd:     рабочий каталог subprocess
-    //
-    // НИКАКОГО url/apiUrl — никаких HTTP-запросов к Ollama.
     public boolean ollamaEnabled = true;
     public String ollamaBinary = "ollama";
     public String ollamaCwd = "";
@@ -103,6 +109,14 @@ public class Config {
         if (http != null) {
             cfg.port = http.optInt("port", cfg.port);
             cfg.host = http.optString("host", cfg.host);
+
+            // ---- NEW: basePath ----
+            String bp = http.optString("basePath", "").trim();
+            if (!bp.isEmpty()) {
+                if (!bp.startsWith("/")) bp = "/" + bp;
+                while (bp.endsWith("/")) bp = bp.substring(0, bp.length() - 1);
+                cfg.basePath = bp;
+            }
         }
 
         JSONObject https = root.optJSONObject("https");
@@ -125,7 +139,6 @@ public class Config {
             cfg.consoleMaxOutputBytes = console.optLong("maxOutputBytes", 1024 * 1024);
         }
 
-        // ---- Hermes Agent ----
         JSONObject hermes = root.optJSONObject("hermes");
         if (hermes != null) {
             cfg.hermesEnabled = hermes.optBoolean("enabled", false);

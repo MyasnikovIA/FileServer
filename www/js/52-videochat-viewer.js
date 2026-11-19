@@ -206,6 +206,21 @@ FAR._createVideoChatViewer = function (hostEl, opts) {
     }
 
     function buildWsUrl(room) {
+        // ============================================================
+        // Если приложение работает под subpath (например /file/ за nginx),
+        // VideoChatServer проксируется через ТОТ ЖЕ origin+basePath.
+        // nginx должен иметь location /file/ws/ → proxy_pass на :8081/ws/.
+        //
+        // Иначе — прямое подключение к отдельному порту VideoChatServer.
+        // ============================================================
+        const basePath = (typeof FAR.basePath === 'string') ? FAR.basePath : '';
+        if (basePath) {
+            const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host    = location.host;   // включает порт, если он нестандартный
+            return wsProto + '//' + host + basePath +
+                '/ws/subscribe?room=' + encodeURIComponent(room);
+        }
+
         const ctx = FAR.side && FAR.side[FAR.activePanel];
         const baseUrl = (ctx && ctx.conn && ctx.conn.url)
             ? String(ctx.conn.url).replace(/\/+$/, '')
@@ -216,7 +231,6 @@ FAR._createVideoChatViewer = function (hostEl, opts) {
         catch (e) { host = location.hostname; }
 
         const wsPort = opts.port || FAR.videoChatPort || 8081;
-        // Определяем протокол: wss для HTTPS, ws для HTTP
         const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 
         return wsProto + '//' + host + ':' + wsPort +

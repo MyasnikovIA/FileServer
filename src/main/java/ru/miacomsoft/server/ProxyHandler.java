@@ -34,7 +34,7 @@ public class ProxyHandler {
             return;
         }
 
-        String path = ex.getRequestURI().getPath();
+        String path = FileServer.stripBase(ex.getRequestURI().getPath());
         if (!path.startsWith("/api/proxy/")) {
             FileServer.sendError(ex, 400, "Invalid proxy path");
             return;

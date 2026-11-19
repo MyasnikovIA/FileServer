@@ -25,7 +25,7 @@ public class ConsoleHandler implements HttpHandler {
     public void handle(HttpExchange ex) throws IOException {
         if (FileServer.handleOptions(ex)) return;
 
-        String path = ex.getRequestURI().getPath();
+        String path = FileServer.stripBase(ex.getRequestURI().getPath());
         if ("/api/console/events".equals(path)) {
             handleEvents(ex);
         } else if ("/api/console/input".equals(path)) {

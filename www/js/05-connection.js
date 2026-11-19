@@ -8,10 +8,26 @@
 // ============================================================
 
 
+/**
+ * Возвращает URL по умолчанию для поля ввода адреса FileServer.
+ *
+ * Формируется из текущего origin + FAR.basePath (если приложение живёт
+ * за nginx под subpath, например /file) + завершающий слэш — так
+ * пользователь видит корректный адрес ещё до того, как что-либо ввёл.
+ *
+ * Примеры:
+ *   https://www.smwrap.ru/file/index.html → { url: "https://www.smwrap.ru/file/" }
+ *   https://www.smwrap.ru/index.html      → { url: "https://www.smwrap.ru/" }
+ *   http://127.0.0.1:8080/index.html      → { url: "http://127.0.0.1:8080/" }
+ *
+ * Завершающий слэш — только для отображения в поле. При сохранении
+ * / подключении FAR.normalizeServerUrl() его срезает, так что на
+ * работу это не влияет.
+ */
 FAR.getDefaultConn = function () {
-    const proto = location.protocol === 'file:' ? 'http:' : location.protocol;
-    const host  = location.hostname || '127.0.0.1';
-    return { url:  proto + '//' + host + ':8080', user: '', pass: '' };
+    const bp = (typeof FAR.basePath === 'string') ? FAR.basePath : '';
+    const url = location.origin + (bp ? bp + '/' : '/');
+    return { url: url, user: '', pass: '' };
 };
 
 
@@ -67,9 +83,9 @@ FAR._testReachability = async function (baseUrl) {
  * Строит URL прокси через текущий origin.
  */
 FAR.buildProxyUrl = function (targetUrl) {
-    const origin = window.location.origin;
-    const b64 = FAR._base64UrlEncode(targetUrl);
-    return origin + '/api/proxy/' + b64;
+    const base = location.origin + (FAR.basePath || '');
+    const b64  = FAR._base64UrlEncode(targetUrl);
+    return base + '/api/proxy/' + b64;
 };
 
 /**
@@ -98,22 +114,24 @@ FAR.ensureDb = function () {
  *
  * @param {Object} cfg — { url, user, pass }
  * @returns {Promise<{db: FsClient, info: Object, fullUrl: string, token: string}>}
- *
- * ВАЖНО: URL в cfg может прийти БЕЗ схемы — пользователь вводит
- * "www.example.com:8080" вместо "http://www.example.com:8080".
- * Мы нормализуем его здесь и МУТИРУЕМ cfg.url, чтобы вызывающий
- * код, который после await использует cfg (applyConnectionToSide,
- * saveSideConnToLS, saveConnToLS), сохранил уже корректный URL.
- *
- * Без этого fetch() падает:
- *   "URL scheme 'www.example.com' is not supported"
  */
-
 FAR.connectToDb = async function (cfg) {
     if (typeof FAR.FsClient !== 'function') throw new Error('FsClient не загружен');
 
-    const originalUrl = FAR.normalizeServerUrl(cfg && cfg.url);
+    let originalUrl = FAR.normalizeServerUrl(cfg && cfg.url);
     if (!originalUrl) throw new Error('Не указан адрес FileServer');
+
+    // Автодополнение базового пути (см. предыдущий фикс).
+    if (FAR.basePath) {
+        try {
+            const u = new URL(originalUrl);
+            if (u.origin === location.origin &&
+                (u.pathname === '/' || u.pathname === '')) {
+                originalUrl = u.origin + FAR.basePath;
+                console.log('[connect] добавлен базовый путь: →', originalUrl);
+            }
+        } catch (e) { /* ignore */ }
+    }
 
     cfg.url = originalUrl;
 
@@ -163,7 +181,6 @@ FAR.connectToDb = async function (cfg) {
     FAR.videoChatEnabled = !!info.videoChatEnabled;
     FAR.videoChatPort = (typeof info.videoChatPort === 'number' && info.videoChatPort > 0) ? info.videoChatPort : 8081;
 
-    // ---- Hermes Agent (профиль консоли) ----
     FAR.hermesEnabled = !!info.hermesEnabled;
     FAR.hermesTitle   = info.hermesTitle || 'Hermes Agent';
     FAR.hermesIcon    = info.hermesIcon  || '☤';
@@ -176,11 +193,9 @@ FAR.connectToDb = async function (cfg) {
         FAR.WM.unregisterConsoleApp();
     }
 
-    // ---- Hermes: регистрация WM-приложения ----
     if (typeof FAR.WM !== 'undefined') {
         if (FAR.hermesEnabled && typeof FAR.WM.registerHermesApp === 'function') {
             try { FAR.WM.registerHermesApp(); } catch (e) { /* ignore */ }
-            // Обновить иконки рабочего стола, если WM уже активен
             if (FAR.WM.state && FAR.WM.state.active
                 && typeof FAR.WM._scheduleDesktopRender === 'function') {
                 try { FAR.WM._scheduleDesktopRender(); } catch (e) { /* ignore */ }
@@ -194,7 +209,6 @@ FAR.connectToDb = async function (cfg) {
         }
     }
 
-    // Обновить видимость кнопки «Hermes Agent» в тулбаре
     if (typeof FAR._updateHermesButton === 'function') {
         try { FAR._updateHermesButton(); } catch (e) { /* ignore */ }
     }

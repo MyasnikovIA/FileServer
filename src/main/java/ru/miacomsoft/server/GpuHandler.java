@@ -52,7 +52,7 @@ public class GpuHandler implements HttpHandler {
     public void handle(HttpExchange ex) throws IOException {
         if (FileServer.handleOptions(ex)) return;
 
-        String path = ex.getRequestURI().getPath();
+        String path = FileServer.stripBase(ex.getRequestURI().getPath());
         String method = ex.getRequestMethod().toUpperCase();
 
         if (!"/api/gpu".equals(path)) {
