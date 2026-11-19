@@ -96,8 +96,34 @@ FAR._viewerCloseAll = function () {
 };
 
 FAR.viewerNavigate = async function (dir) {
-    const side  = FAR._viewerSide;
-    const index = FAR._viewerIndex;
+    let side  = FAR._viewerSide;
+    let index = FAR._viewerIndex;
+
+    // ============================================================
+    // Fallback: если контекст не установлен (например, панорама была
+    // открыта из WM не через FAR.openFile, а напрямую) — выводим
+    // его из активного окна.
+    // ============================================================
+    if ((!side || index < 0)
+        && typeof FAR.WM !== 'undefined'
+        && FAR.WM.state && FAR.WM.state.active) {
+        const aw = (typeof FAR.WM.getActiveWindow === 'function')
+            ? FAR.WM.getActiveWindow()
+            : null;
+        if (aw && aw.props && aw.props.file) {
+            const inferredSide = aw.props.side || FAR.activePanel;
+            if (FAR.side[inferredSide]) {
+                const inferredIndex = FAR._viewerResolveIndex(inferredSide, aw.props.file);
+                if (inferredIndex >= 0) {
+                    side  = inferredSide;
+                    index = inferredIndex;
+                    FAR._viewerSide  = side;
+                    FAR._viewerIndex = index;
+                }
+            }
+        }
+    }
+
     if (!side || index < 0) return;
 
     const targetIdx = FAR._viewerFindFileIndex(side, index, dir);
@@ -110,11 +136,76 @@ FAR.viewerNavigate = async function (dir) {
     const item  = files[targetIdx];
     if (!item) return;
 
+    // Запоминаем текущий (просматриваемый) элемент — по нему ищем окно в WM
+    const currentItem = (index >= 0 && files[index]) ? files[index] : null;
+
     const prevSide  = FAR._viewerSide;
     const prevIndex = FAR._viewerIndex;
     FAR._viewerSide  = side;
     FAR._viewerIndex = targetIdx;
 
+    // ============================================================
+    // WM-РЕЖИМ: переиспользуем текущее окно просмотрщика
+    // ============================================================
+    if (typeof FAR.WM !== 'undefined'
+        && FAR.WM.state && FAR.WM.state.active
+        && typeof FAR.WM._reopenAppInWindow === 'function') {
+
+        let currentWin = null;
+
+        // 1. Приоритет — активное окно (пользователь кликнул по его titlebar)
+        if (typeof FAR.WM.getActiveWindow === 'function') {
+            const aw = FAR.WM.getActiveWindow();
+            if (aw && aw.appId && aw.props && aw.props.file) {
+                currentWin = aw;
+            }
+        }
+
+        // 2. Fallback — поиск окна по текущему файлу среди всех окон
+        if (!currentWin && currentItem
+            && typeof FAR.WM._findWindowForFile === 'function') {
+            currentWin = FAR.WM._findWindowForFile(currentItem, side);
+        }
+
+        // 3. Резерв — любое окно-просмотрщик (на случай, если props.file
+        //    отличается — например, если открытие шло не через openFile)
+        if (!currentWin) {
+            const VIEWER_APP_IDS = ['panorama', 'viewer', 'pdf', 'mp3', 'video',
+                'jsdos', 'emulator', 'lbrn2', 'gcode', 'texteditor'];
+            for (const w of FAR.WM.state.windows) {
+                if (VIEWER_APP_IDS.indexOf(w.appId) !== -1
+                    && w.props && w.props.file) {
+                    currentWin = w;
+                    break;
+                }
+            }
+        }
+
+        if (currentWin) {
+            try {
+                await FAR.WM._reopenAppInWindow(currentWin, {
+                    file: item,
+                    side: side
+                });
+                if (typeof FAR._selectFileInPanel === 'function') {
+                    FAR._selectFileInPanel(item, side);
+                }
+                FAR._viewerUpdateNavButtons();
+                return;
+            } catch (e) {
+                console.error('viewerNavigate (WM reuse failed):', e);
+                FAR._viewerSide  = prevSide;
+                FAR._viewerIndex = prevIndex;
+                FAR._viewerUpdateNavButtons();
+                FAR.toast('Не удалось открыть файл: ' + e.message, 'error');
+                return;
+            }
+        }
+    }
+
+    // ============================================================
+    // МОДАЛЬНЫЙ РЕЖИМ — прежнее поведение
+    // ============================================================
     FAR._viewerCloseAll();
 
     try {

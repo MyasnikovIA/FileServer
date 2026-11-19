@@ -158,9 +158,36 @@ FAR.WM._installViewerNavButtons = function (win, item, side) {
             e.stopPropagation();
             const f = files[targetIdx];
             if (!f) return;
-            FAR.WM.closeWindow(win.id, true);
+
+            // Обновляем контекст навигации для последовательных ◀/▶
+            FAR._viewerSide  = side;
+            FAR._viewerIndex = targetIdx;
+
             try {
-                await FAR.openFile(f, side, targetIdx);
+                // ============================================================
+                // ГЛАВНОЕ ИСПРАВЛЕНИЕ
+                // ============================================================
+                // Раньше здесь было:
+                //     FAR.WM.closeWindow(win.id, true);
+                //     await FAR.openFile(f, side, targetIdx);
+                // Это закрывало текущее окно и создавало НОВОЕ через
+                // FAR.WM.openApp('panorama'|…) с дефолтными размерами.
+                //
+                // Теперь мы переоткрываем приложение В ТОМ ЖЕ ОКНЕ,
+                // сохраняя его позицию, размер, maximized-флаг и фокус.
+                // ============================================================
+                if (typeof FAR.WM._reopenAppInWindow === 'function') {
+                    await FAR.WM._reopenAppInWindow(win, { file: f, side: side });
+                } else {
+                    // Fallback — старое поведение (если _reopenAppInWindow
+                    // почему-то не определена, например из-за порядка загрузки)
+                    FAR.WM.closeWindow(win.id, true);
+                    await FAR.openFile(f, side, targetIdx);
+                }
+
+                if (typeof FAR._selectFileInPanel === 'function') {
+                    FAR._selectFileInPanel(f, side);
+                }
             } catch (err) {
                 console.error('[WM nav] openFile failed:', err);
             }

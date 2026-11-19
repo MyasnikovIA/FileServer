@@ -111,11 +111,22 @@ FAR.WM._installOpenFileWrapper = function () {
         if (!FAR.WM.state.active) return FAR.WM._orig.openFile.apply(this, arguments);
 
         side = side || FAR.activePanel;
+
+        // ============================================================
+        // ВАЖНО (fix): запоминаем контекст просмотра ДО вызова openApp.
+        // Оригинальный FAR.openFile (в 11-viewer.js) выставляет
+        // _viewerSide/_viewerIndex, но в WM-режиме он НЕ вызывается —
+        // обёртка сразу уходит в FAR.WM.openApp(). Без этих двух строк
+        // FAR.viewerNavigate не может найти текущее окно и создаёт новое.
+        // ============================================================
+        FAR._viewerSide = side;
+        FAR._viewerIndex = (typeof index === 'number' && index >= 0)
+            ? index
+            : FAR._viewerResolveIndex(side, item);
+
         try {
             if (typeof FAR.WM.isFbmp3 === 'function' && FAR.WM.isFbmp3(item)) return FAR.WM.openApp('mp3', { props: { file: item, side: side, playlistPath: item.path } });
             if (typeof FAR.isJsdos === 'function' && FAR.isJsdos(item)) return FAR.WM.openApp('jsdos', { props: { file: item, side: side } });
-
-            // Маршрутизация NES удалена, идет в 'emulator'
 
             if (typeof FAR.isEmulatorFile === 'function' && FAR.isEmulatorFile(item)) return FAR.WM.openApp('emulator', { props: { file: item, side: side } });
             if (typeof FAR.isMp3 === 'function' && FAR.isMp3(item)) return FAR.WM.openApp('mp3', { props: { file: item, side: side } });
