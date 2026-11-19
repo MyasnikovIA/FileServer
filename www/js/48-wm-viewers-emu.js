@@ -118,6 +118,11 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         } catch (e) {}
 
         FAR.setStatus('🕹️ JSDOS: ' + (item.name || item.path));
+
+        // === НОВОЕ: кнопки ◀ / ▶ в titlebar ===
+        if (typeof FAR.WM._installViewerNavButtons === 'function') {
+            try { FAR.WM._installViewerNavButtons(win, item, side); } catch (e) {}
+        }
     } catch (e) {
         console.error('[WM JSDOS] failed:', e);
         loading.innerHTML = '<div class="jsdos-loading-text">Ошибка запуска</div>';
@@ -216,6 +221,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         });
 
         win.props._emulatorInstance = window.EJS_emulator;
+        win.props._ejsOwnerWinId    = win.id;
 
         // Ждем создания canvas
         const waitStart = Date.now();
@@ -251,47 +257,138 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
             FAR.VirtualGamepad.mount(host, core);
         }
 
+        // === НОВОЕ: кнопки ◀ / ▶ в titlebar (как у панорам/PDF/видео) ===
+        if (typeof FAR.WM._installViewerNavButtons === 'function') {
+            try { FAR.WM._installViewerNavButtons(win, item, side); } catch (e) {}
+        }
+
     } catch (e) {
         console.error('[WM Emu] failed:', e);
         loading.innerHTML = '<div class="emulator-loading-text">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>';
     }
 };
 
+// ============================================================
+// Финализация WM-окна.
+//
+// ВАЖНО: эта функция ПЕРЕОПРЕДЕЛЯЕТ версию из 47-wm-viewers.js,
+// поэтому обязана покрывать ВСЕ типы ресурсов:
+//   • ResizeObserver
+//   • VirtualGamepad (JSDOS / EmulatorJS)
+//   • JSDOS instance
+//   • EmulatorJS (жёсткая остановка через _hardStopEmulatorJS)
+//   • Pannellum
+//   • Browser API
+//   • Все виды blob URL
+// ============================================================
 FAR.WM._finalizeViewer = function (win) {
     if (!win || !win.props) return;
 
+    // --- ResizeObserver ---
     if (win.props._resizeObserver) {
         try { win.props._resizeObserver.disconnect(); } catch (e) {}
         win.props._resizeObserver = null;
     }
 
+    // --- VirtualGamepad ---
+    if (typeof FAR.VirtualGamepad !== 'undefined' && win.bodyEl) {
+        try {
+            const roots = win.bodyEl.querySelectorAll('.emulator-root, .jsdos-root, [data-role="root"]');
+            roots.forEach(function (node) {
+                try { FAR.VirtualGamepad.unmount(node); } catch (e) {}
+            });
+            try { FAR.VirtualGamepad.unmount(win.bodyEl); } catch (e) {}
+        } catch (e) {}
+    }
+
+    // --- JSDOS ---
     if (win.props._jsdosInstance) {
         try { win.props._jsdosInstance.stop(); } catch (e) {}
         win.props._jsdosInstance = null;
     }
 
-    if (window.EJS_emulator && typeof window.EJS_emulator.pause === 'function') {
-        try { window.EJS_emulator.pause(); } catch (e) {}
-    }
-    try { window.EJS_emulator = null; } catch (e) {}
-    try { window.EJS_gameUrl = ''; } catch (e) {}
+    // --- EmulatorJS: ЖЁСТКАЯ остановка через общий хелпер ---
+    //
+    // Раньше здесь был только emu.pause() + обнуление window.EJS_emulator.
+    // Этого недостаточно — EmulatorJS держит AudioContext, который
+    // продолжает звучать. _hardStopEmulatorJS гасит AudioContext,
+    // останавливает игровой цикл, abort'ит WASM.
+    const emuCandidates = [];
+    if (win.props._emulatorInstance) emuCandidates.push(win.props._emulatorInstance);
+    try {
+        if (window.EJS_emulator && win.props._ejsOwnerWinId === win.id) {
+            emuCandidates.push(window.EJS_emulator);
+        }
+    } catch (e) {}
 
+    for (const emu of emuCandidates) {
+        try {
+            if (typeof FAR._hardStopEmulatorJS === 'function') {
+                FAR._hardStopEmulatorJS(emu);
+            } else {
+                // Fallback, если 30-emulator-viewer.js ещё не загружен
+                try { if (typeof emu.pause === 'function') emu.pause(true); } catch (e) {}
+                try { if (typeof emu.destroy === 'function') emu.destroy(); } catch (e) {}
+            }
+        } catch (e) {
+            console.warn('[WM _finalizeViewer] emu stop:', e);
+        }
+    }
+
+    // Обнуляем ссылку на нашем окне
+    win.props._emulatorInstance = null;
+    win.props._ejsOwnerWinId = null;
+
+    // Если глобальная ссылка принадлежит этому окну — обнуляем
+    try {
+        if (window.EJS_emulator && win.props && win.props._ejsOwnerWinId === win.id) {
+            window.EJS_emulator = null;
+        }
+    } catch (e) {}
+    try { if (window.EJS_gameUrl) window.EJS_gameUrl = ''; } catch (e) {}
+
+    // --- Pannellum ---
+    if (win.props._pannellumViewer) {
+        try { win.props._pannellumViewer.destroy(); } catch (e) {}
+        win.props._pannellumViewer = null;
+    }
+
+    // --- Browser API ---
+    if (win.props._browserApi) {
+        try { win.props._browserApi.destroy(); } catch (e) {}
+        win.props._browserApi = null;
+    }
+
+    // --- Blob URLs ---
     if (Array.isArray(win.props._jsdosBlobUrls)) {
-        win.props._jsdosBlobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+        win.props._jsdosBlobUrls.forEach(function (u) {
+            try { URL.revokeObjectURL(u); } catch (e) {}
+        });
         win.props._jsdosBlobUrls = [];
     }
-
     if (Array.isArray(win.props._emuBlobUrls)) {
-        win.props._emuBlobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+        win.props._emuBlobUrls.forEach(function (u) {
+            try { URL.revokeObjectURL(u); } catch (e) {}
+        });
         win.props._emuBlobUrls = [];
     }
+    if (Array.isArray(win.props._blobUrls)) {
+        win.props._blobUrls.forEach(function (u) {
+            try { URL.revokeObjectURL(u); } catch (e) {}
+        });
+        win.props._blobUrls = [];
+    }
 
+    // --- Очистка DOM окна ---
     if (win.bodyEl) {
         try { win.bodyEl.innerHTML = ''; } catch (e) {}
     }
 
+    // --- Снятие фокуса ---
     try {
-        if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+        if (document.activeElement && document.activeElement !== document.body) {
+            document.activeElement.blur();
+        }
         document.body.focus();
     } catch (e) {}
 };

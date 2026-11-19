@@ -1,6 +1,76 @@
 // ============================================================
 // 30-emulator-viewer.js — Просмотр игр через EmulatorJS
 // ============================================================
+// ============================================================
+// Жёсткая остановка EmulatorJS.
+//
+// EmulatorJS 4.x держит собственный AudioContext (WebAudio),
+// который продолжает звучать даже после удаления DOM-узлов.
+// Обычного el.remove() или element.remove() недостаточно.
+// Нужно пройтись по всем AudioContext'ам, которые успел
+// создать эмулятор, и явно закрыть их.
+// ============================================================
+if (!FAR._hardStopEmulatorJS) {
+    FAR._hardStopEmulatorJS = function (emu) {
+        if (!emu) return;
+
+        // 1. Останавливаем игровой цикл
+        try {
+            if (emu.gameManager && typeof emu.gameManager.toggleMainLoop === 'function') {
+                emu.gameManager.toggleMainLoop(0);
+            }
+        } catch (e) { /* ignore */ }
+
+        try {
+            if (emu.Module && typeof emu.Module.pauseMainLoop === 'function') {
+                emu.Module.pauseMainLoop();
+            }
+        } catch (e) { /* ignore */ }
+
+        // 2. Останавливаем звук (WebAudio). Перебираем все известные пути.
+        try {
+            const ctx =
+                (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
+                    emu.Module.AL.currentCtx.audioCtx) ||
+                (emu.Module && emu.Module.audioContext) ||
+                (emu.AudioContext) ||
+                (emu.audioContext) ||
+                null;
+
+            if (ctx && typeof ctx.close === 'function' && ctx.state !== 'closed') {
+                try { ctx.close(); } catch (e) {}
+            }
+        } catch (e) { /* ignore */ }
+
+        // 3. Встроенные pause/stop/destroy
+        try { if (typeof emu.pause === 'function')   emu.pause(true); } catch (e) {}
+        try { if (typeof emu.stop === 'function')    emu.stop();      } catch (e) {}
+        try { if (typeof emu.destroy === 'function') emu.destroy();   } catch (e) {}
+
+        // 4. Прерываем WASM
+        try {
+            if (emu.Module && typeof emu.Module.abort === 'function') {
+                emu.Module.abort();
+            }
+        } catch (e) { /* ignore */ }
+
+        // 5. Гасим все <audio>/<video> внутри контейнера #emulator
+        //    (если EmulatorJS создал вне-AudioContext медиа-элементы)
+        try {
+            const container = document.getElementById('emulator');
+            if (container) {
+                container.querySelectorAll('audio, video').forEach(function (el) {
+                    try { el.pause(); el.src = ''; el.load(); } catch (e) {}
+                });
+            }
+        } catch (e) { /* ignore */ }
+
+        // 6. Обнуляем глобальную ссылку — иначе нельзя создать новый инстанс
+        try {
+            if (window.EJS_emulator === emu) window.EJS_emulator = null;
+        } catch (e) { /* ignore */ }
+    };
+}
 
 FAR._emulatorInstance = null;
 FAR._emulatorCurrentItem = null;
@@ -452,19 +522,62 @@ FAR.downloadCurrentEmulator = async function() {
     }
 };
 
-FAR.closeEmulatorViewer = function() {
+/**
+ * Закрывает модалку эмулятора и ПОЛНОСТЬЮ выгружает игру из памяти.
+ *
+ * КРИТИЧНО: без жёсткой остановки EmulatorJS продолжает играть звук
+ * из WebAudio даже после удаления DOM-узлов и закрытия модалки.
+ */
+FAR.closeEmulatorViewer = function () {
     const modal = document.getElementById('emulatorViewerModal');
     if (modal) modal.classList.add('hidden');
 
-    FAR._destroyEmulator();
+    // === 1. Жёстко останавливаем EmulatorJS ===
+    // Берём глобальную ссылку (её выставляет сам EmulatorJS при создании),
+    // а также — если у вас есть собственный трекинг-переменной —
+    // дополнительно её.
+    const candidates = [];
+    try { if (window.EJS_emulator) candidates.push(window.EJS_emulator); } catch (e) {}
+    try { if (FAR._emuInstance)   candidates.push(FAR._emuInstance);   } catch (e) {}
 
-    FAR._emulatorBlobUrls.forEach(function(u) {
-        try { URL.revokeObjectURL(u); } catch (e) {}
-    });
-    FAR._emulatorBlobUrls = [];
+    for (const emu of candidates) {
+        try { FAR._hardStopEmulatorJS(emu); } catch (e) { console.warn('[emu stop]', e); }
+    }
 
-    FAR._emulatorCurrentItem = null;
-    FAR._emulatorCurrentSide = null;
+    // Снимаем нашу ссылку (если она была)
+    try { FAR._emuInstance = null; } catch (e) {}
 
-    try { document.body.focus(); } catch (e) {}
+    // === 2. Удаляем всё содержимое контейнера эмулятора ===
+    //     (после hardStop — это уже просто DOM-уборка)
+    const root = document.getElementById('emulatorRoot');
+    if (root) root.innerHTML = '';
+
+    // === 3. Снимаем виртуальный джойстик, если он был смонтирован ===
+    if (typeof FAR.VirtualGamepad !== 'undefined' && root) {
+        try { FAR.VirtualGamepad.unmount(root); } catch (e) {}
+    }
+
+    // === 4. Сбрасываем переменные текущего файла ===
+    FAR._emuCurrentItem = null;
+    FAR._emuCurrentSide = null;
+
+    // === 5. Отзываем blob URL'ы, если они где-то учитывались ===
+    if (Array.isArray(FAR._emuBlobUrls)) {
+        for (const u of FAR._emuBlobUrls) {
+            try { URL.revokeObjectURL(u); } catch (e) {}
+        }
+        FAR._emuBlobUrls = [];
+    }
+
+    // === 6. Обновляем кнопки навигации (◀/▶) — они привязаны к openFile ===
+    if (typeof FAR._viewerUpdateNavButtons === 'function') {
+        try { FAR._viewerUpdateNavButtons(); } catch (e) {}
+    }
+
+    // === 7. Убираем фокус с эмулятора, чтобы клавиатура перестала слать keydown ===
+    try {
+        if (document.activeElement && root && root.contains(document.activeElement)) {
+            document.activeElement.blur();
+        }
+    } catch (e) {}
 };

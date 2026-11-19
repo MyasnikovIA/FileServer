@@ -28,12 +28,109 @@ FAR.WM._trackBlobUrl = function (win, url) {
 };
 
 /**
+ * Жёсткая остановка EmulatorJS.
+ *
+ * EmulatorJS держит собственный AudioContext (WebAudio), который
+ * продолжает звучать даже после удаления DOM-узлов. Поэтому
+ * обычного `element.remove()` недостаточно — нужно явно
+ * пройтись по всем AudioContext'ам, которые успел создать
+ * эмулятор, и закрыть их.
+ */
+FAR.WM._hardStopEmulatorJS = function (emu) {
+    if (!emu) return;
+
+    // === 1. Останавливаем игровой цикл ===
+    try {
+        if (emu.gameManager && typeof emu.gameManager.toggleMainLoop === 'function') {
+            emu.gameManager.toggleMainLoop(0);
+        }
+    } catch (e) { /* ignore */ }
+
+    try {
+        if (emu.Module && typeof emu.Module.pauseMainLoop === 'function') {
+            emu.Module.pauseMainLoop();
+        }
+    } catch (e) { /* ignore */ }
+
+    // === 2. Останавливаем звук (WebAudio) ===
+    // EmulatorJS 3.x / 4.x хранит AudioContext в разных местах.
+    // Перебираем все известные пути + собираем из window.
+    try {
+        const ctx =
+            (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
+                emu.Module.AL.currentCtx.audioCtx) ||
+            (emu.Module && emu.Module.audioContext) ||
+            (emu.AudioContext) ||
+            (emu.audioContext) ||
+            null;
+
+        if (ctx && typeof ctx.close === 'function' && ctx.state !== 'closed') {
+            try { ctx.close(); } catch (e) {}
+        }
+    } catch (e) { /* ignore */ }
+
+    // === 3. Встроенный pause / destroy ===
+    try { if (typeof emu.pause === 'function') emu.pause(true); } catch (e) {}
+    try { if (typeof emu.stop === 'function') emu.stop(); } catch (e) {}
+    try { if (typeof emu.destroy === 'function') emu.destroy(); } catch (e) {}
+
+    // === 4. Прерываем WASM ===
+    try {
+        if (emu.Module && typeof emu.Module.abort === 'function') {
+            emu.Module.abort();
+        }
+    } catch (e) { /* ignore */ }
+
+    // === 5. Останавливаем все <audio>/<video> внутри будущего контейнера ===
+    //     (на случай если EmulatorJS создал медиа-элементы вне контекста)
+    try {
+        const emulatorEl = document.getElementById('emulator');
+        if (emulatorEl) {
+            emulatorEl.querySelectorAll('audio, video').forEach(function (el) {
+                try { el.pause(); el.src = ''; el.load(); } catch (e) {}
+            });
+        }
+    } catch (e) { /* ignore */ }
+
+    // === 6. Обнуляем глобальную ссылку — критично, иначе EmulatorJS
+    //     не даст создать новый инстанс на той же странице ===
+    try {
+        if (window.EJS_emulator === emu) window.EJS_emulator = null;
+    } catch (e) { /* ignore */ }
+
+    // === 7. На всякий случай — глобальные флаги EJS ===
+    try {
+        if (typeof window.EJS_pathtodata !== 'undefined') {
+            // Не трогаем — это настройка, не инстанс
+        }
+        if (window.EJS_emulator === undefined) {
+            // уже null
+        }
+    } catch (e) { /* ignore */ }
+};
+
+/**
+ * Останавливает EmulatorJS, привязанный к конкретному WM-окну.
+ * Используется из _finalizeViewer (при закрытии окна) и при
+ * переключении ◀/▶ (из _reopenAppInWindow).
+ */
+FAR.WM._stopEmulatorInWin = function (win) {
+    if (!win || !win.props) return;
+
+    const emu = win.props._emulatorInstance;
+    if (emu) {
+        try { FAR._hardStopEmulatorJS(emu); } catch (e) { console.warn('[WM emu stop]', e); }
+        win.props._emulatorInstance = null;
+    }
+};
+
+/**
  * Освобождает все ресурсы окна-просмотрщика:
- *  • отзывает все blob URL;
- *  • останавливает JSDOS / NES / EmulatorJS (включая AudioContext);
+ *  • останавливает JSDOS / EmulatorJS (включая AudioContext);
  *  • уничтожает Pannellum-вьюер;
- *  • уничтожает API встроенного браузера.
- *  • удаляет виртуальный джойстик.
+ *  • уничтожает API встроенного браузера;
+ *  • удаляет виртуальный джойстик;
+ *  • отзывает blob URL.
  */
 FAR.WM._finalizeViewer = function (win) {
     if (!win || !win.props) return;
@@ -49,64 +146,54 @@ FAR.WM._finalizeViewer = function (win) {
 
     // JSDOS
     if (win.props._jsdosInstance) {
-        try { win.props._jsdosInstance.stop(); } catch (e) { /* ignore */ }
+        try { win.props._jsdosInstance.stop(); } catch (e) {}
         win.props._jsdosInstance = null;
     }
 
     // NES
     if (win.props._nesBrowser) {
-        try { win.props._nesBrowser.destroy(); } catch (e) { /* ignore */ }
+        try { win.props._nesBrowser.destroy(); } catch (e) {}
         win.props._nesBrowser = null;
     }
 
-    // EmulatorJS (жесткая остановка аудио и WASM)
+    // EmulatorJS (жёсткая остановка аудио и WASM)
     if (win.props._emulatorInstance) {
-        const emu = win.props._emulatorInstance;
-        try {
-            // 1. Обязательно закрываем AudioContext, иначе звук продолжит играть
-            if (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
-                emu.Module.AL.currentCtx.audioCtx) {
-                try { emu.Module.AL.currentCtx.audioCtx.close(); } catch (e) {}
-            }
-            // 2. Останавливаем игровой цикл
-            if (emu.gameManager && typeof emu.gameManager.toggleMainLoop === 'function') {
-                try { emu.gameManager.toggleMainLoop(0); } catch (e) {}
-            }
-            if (emu.Module && typeof emu.Module.pauseMainLoop === 'function') {
-                try { emu.Module.pauseMainLoop(); } catch (e) {}
-            }
-            // 3. Вызываем встроенные методы
-            if (typeof emu.pause === 'function') { try { emu.pause(true); } catch (e) {} }
-            if (typeof emu.destroy === 'function') { try { emu.destroy(); } catch (e) {} }
-            // 4. Прерываем WebAssembly
-            if (emu.Module && typeof emu.Module.abort === 'function') {
-                try { emu.Module.abort(); } catch (e) {}
-            }
-        } catch (e) { /* ignore */ }
-
-        // Очищаем глобальную ссылку только если это тот же инстанс
-        if (window.EJS_emulator === emu) {
-            window.EJS_emulator = null;
-        }
+        FAR.WM._hardStopEmulatorJS(win.props._emulatorInstance);
         win.props._emulatorInstance = null;
     }
 
+    // Дополнительно: если на странице остался глобальный EJS_emulator,
+    // принадлежащий этому окну — тоже гасим (последняя линия обороны
+    // от «звук продолжает играть»).
+    try {
+        if (window.EJS_emulator) {
+            // Проверяем, что это именно эмулятор данного окна
+            const belongsToThisWin =
+                (win.props && win.props._ejsOwnerWinId === win.id) ||
+                (!win.props._ejsOwnerWinId && win.bodyEl &&
+                    win.bodyEl.querySelector('#emulator'));
+            if (belongsToThisWin) {
+                FAR.WM._hardStopEmulatorJS(window.EJS_emulator);
+            }
+        }
+    } catch (e) { /* ignore */ }
+
     // Pannellum
     if (win.props._pannellumViewer) {
-        try { win.props._pannellumViewer.destroy(); } catch (e) { /* ignore */ }
+        try { win.props._pannellumViewer.destroy(); } catch (e) {}
         win.props._pannellumViewer = null;
     }
 
     // Встроенный браузер
     if (win.props._browserApi) {
-        try { win.props._browserApi.destroy(); } catch (e) { /* ignore */ }
+        try { win.props._browserApi.destroy(); } catch (e) {}
         win.props._browserApi = null;
     }
 
     // Blob URL
     if (Array.isArray(win.props._blobUrls)) {
         for (const u of win.props._blobUrls) {
-            try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ }
+            try { URL.revokeObjectURL(u); } catch (e) {}
         }
         win.props._blobUrls = [];
     }
@@ -159,32 +246,16 @@ FAR.WM._installViewerNavButtons = function (win, item, side) {
             const f = files[targetIdx];
             if (!f) return;
 
-            // Обновляем контекст навигации для последовательных ◀/▶
             FAR._viewerSide  = side;
             FAR._viewerIndex = targetIdx;
 
             try {
-                // ============================================================
-                // ГЛАВНОЕ ИСПРАВЛЕНИЕ
-                // ============================================================
-                // Раньше здесь было:
-                //     FAR.WM.closeWindow(win.id, true);
-                //     await FAR.openFile(f, side, targetIdx);
-                // Это закрывало текущее окно и создавало НОВОЕ через
-                // FAR.WM.openApp('panorama'|…) с дефолтными размерами.
-                //
-                // Теперь мы переоткрываем приложение В ТОМ ЖЕ ОКНЕ,
-                // сохраняя его позицию, размер, maximized-флаг и фокус.
-                // ============================================================
                 if (typeof FAR.WM._reopenAppInWindow === 'function') {
                     await FAR.WM._reopenAppInWindow(win, { file: f, side: side });
                 } else {
-                    // Fallback — старое поведение (если _reopenAppInWindow
-                    // почему-то не определена, например из-за порядка загрузки)
                     FAR.WM.closeWindow(win.id, true);
                     await FAR.openFile(f, side, targetIdx);
                 }
-
                 if (typeof FAR._selectFileInPanel === 'function') {
                     FAR._selectFileInPanel(f, side);
                 }
