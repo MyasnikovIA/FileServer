@@ -2,6 +2,77 @@
 // 30-emulator-viewer.js — Просмотр игр через EmulatorJS
 // ============================================================
 // ============================================================
+// ПАТЧ EmulatorJS.prototype.handleResize
+//
+// Причина: EmulatorJS регистрирует глобальный window.addEventListener(
+// 'resize', ...) в конструкторе и НЕ снимает его при destroy().
+// После закрытия окна инстанс остаётся «зомби»: его this.elements.parent
+// уже null (DOM вычищен), но глобальный listener продолжает получать
+// события resize (от других эмуляторов, от JSDOS, от ресайза страницы)
+// и падает: Cannot read properties of null (reading 'classList').
+//
+// Патч ставит null-guard в начале handleResize. Это защищает все
+// инстансы (и живые, и зомби) и убирает шум в консоли.
+// ============================================================
+FAR._patchEmulatorJSResize = function () {
+    const E = window.EmulatorJS;
+    if (!E || !E.prototype) return false;
+
+    const proto = E.prototype;
+    if (proto._farPatchedHandleResize) return true;
+
+    const orig = proto.handleResize;
+    if (typeof orig !== 'function') return false;
+
+    proto.handleResize = function () {
+        try {
+            // Если родительского контейнера нет (уничтожен) — молча выходим
+            if (!this || !this.elements || !this.elements.parent) return;
+            if (!this.elements.parent.isConnected) return;
+            return orig.apply(this, arguments);
+        } catch (e) {
+            // Зомби-инстанс — гасим молча
+        }
+    };
+    proto._farPatchedHandleResize = true;
+    console.log('[EmulatorJS] handleResize патчен (null-safe)');
+    return true;
+};
+
+// То же самое, но для конкретного инстанса (на случай если
+// handleResize задан как own-property через .bind(this) в конструкторе).
+FAR._patchEmulatorJSInstanceResize = function (emu) {
+    if (!emu || emu._farPatchedResizeInstance) return;
+    const orig = emu.handleResize;
+    if (typeof orig !== 'function') return;
+    emu.handleResize = function () {
+        try {
+            if (!this || !this.elements || !this.elements.parent) return;
+            if (!this.elements.parent.isConnected) return;
+            return orig.apply(this, arguments);
+        } catch (e) { /* swallow */ }
+    };
+    emu._farPatchedResizeInstance = true;
+};
+
+// Фильтр ошибок — belt-and-suspenders: если по какой-то причине
+// патч не успел примениться (или EmulatorJS переопределяет свой
+// handleResize динамически), глушим конкретно этот «classList of null».
+if (!FAR._ejsResizeErrorFilterInstalled) {
+    FAR._ejsResizeErrorFilterInstalled = true;
+    window.addEventListener('error', function (ev) {
+        try {
+            const msg = ev && ev.message ? String(ev.message) : '';
+            if (msg.indexOf("Cannot read properties of null") !== -1 &&
+                (msg.indexOf("classList") !== -1 || msg.indexOf("parent") !== -1)) {
+                try { ev.preventDefault(); ev.stopPropagation(); } catch (e) {}
+                return true;
+            }
+        } catch (e) {}
+    }, true);
+}
+
+// ============================================================
 // Жёсткая остановка EmulatorJS.
 //
 // EmulatorJS 4.x держит собственный AudioContext (WebAudio),
@@ -42,6 +113,19 @@ if (!FAR._hardStopEmulatorJS) {
             }
         } catch (e) { /* ignore */ }
 
+        // 2b. Дополнительно — закрываем все AudioContext, которые мы
+        //     успели зарегистрировать при создании инстанса.
+        try {
+            if (Array.isArray(FAR._emuAudioContexts)) {
+                for (const c of FAR._emuAudioContexts) {
+                    try {
+                        if (c && typeof c.close === 'function' && c.state !== 'closed') c.close();
+                    } catch (e) {}
+                }
+                FAR._emuAudioContexts = [];
+            }
+        } catch (e) { /* ignore */ }
+
         // 3. Встроенные pause/stop/destroy
         try { if (typeof emu.pause === 'function')   emu.pause(true); } catch (e) {}
         try { if (typeof emu.stop === 'function')    emu.stop();      } catch (e) {}
@@ -54,13 +138,26 @@ if (!FAR._hardStopEmulatorJS) {
             }
         } catch (e) { /* ignore */ }
 
-        // 5. Гасим все <audio>/<video> внутри контейнера #emulator
-        //    (если EmulatorJS создал вне-AudioContext медиа-элементы)
+        // 5. Гасим все <audio>/<video>/<iframe> внутри контейнеров
+        //    эмулятора (ищем по всем известным id/классам).
         try {
-            const container = document.getElementById('emulator');
-            if (container) {
-                container.querySelectorAll('audio, video').forEach(function (el) {
-                    try { el.pause(); el.src = ''; el.load(); } catch (e) {}
+            const containers = [];
+            const byRoot = document.getElementById('emulatorRoot');
+            const byEmu  = document.getElementById('emulator');
+            if (byRoot) containers.push(byRoot);
+            if (byEmu)  containers.push(byEmu);
+            document.querySelectorAll('.emulator-root').forEach(function (el) {
+                containers.push(el);
+            });
+
+            for (const container of containers) {
+                if (!container) continue;
+                container.querySelectorAll('audio, video, iframe').forEach(function (el) {
+                    try {
+                        if (typeof el.pause === 'function') el.pause();
+                        el.src = '';
+                        if (typeof el.load === 'function') el.load();
+                    } catch (e) {}
                 });
             }
         } catch (e) { /* ignore */ }
@@ -74,7 +171,9 @@ if (!FAR._hardStopEmulatorJS) {
 
 FAR._emulatorInstance = null;
 FAR._emulatorCurrentItem = null;
+FAR._emulatorCurrentSide = null;
 FAR._emulatorBlobUrls = [];
+FAR._emuAudioContexts = [];
 FAR._ejsLoaderPromise = null;
 FAR._ejsLibraryLoaded = false;
 FAR._emulatorKeyHandler = null;
@@ -131,6 +230,8 @@ FAR.isEmulatorFile = function(item) {
 
 FAR._loadEmulatorLoader = function() {
     if (FAR._ejsLibraryLoaded && window.EmulatorJS) {
+        // Патчим resize при каждом вызове — идемпотентно
+        try { FAR._patchEmulatorJSResize(); } catch (e) {}
         return Promise.resolve();
     }
     if (FAR._ejsLoaderPromise) {
@@ -139,7 +240,7 @@ FAR._loadEmulatorLoader = function() {
 
     FAR._ejsLoaderPromise = new Promise(function(resolve, reject) {
         const script = document.createElement('script');
-        script.src = 'lib/js-emulator/loader.js'; // ПРАВИЛЬНЫЙ ПУТЬ
+        script.src = 'lib/js-emulator/loader.js';
         script.async = true;
 
         let elapsed = 0;
@@ -149,6 +250,7 @@ FAR._loadEmulatorLoader = function() {
         const poll = function() {
             if (typeof window.EmulatorJS === 'function') {
                 FAR._ejsLibraryLoaded = true;
+                try { FAR._patchEmulatorJSResize(); } catch (e) {}
                 console.log('[EmulatorJS] loader.js выполнен, window.EmulatorJS доступен');
                 resolve();
                 return;
@@ -249,7 +351,7 @@ FAR.openEmulatorViewer = async function (item, side) {
     window.EJS_core          = core;
     window.EJS_gameUrl       = blobUrl;
     window.EJS_gameName      = item.name;
-    window.EJS_pathtodata    = 'lib/js-emulator/'; // ПРАВИЛЬНЫЙ ПУТЬ
+    window.EJS_pathtodata    = 'lib/js-emulator/';
     window.EJS_color         = '#89b4fa';
     window.EJS_startOnLoaded = true;
 
@@ -341,6 +443,9 @@ FAR._emulatorFocus = function(root) {
 
 FAR._createEmulatorInstance = function(rootContainer, resolve, reject) {
     try {
+        // Патчим EmulatorJS.prototype.handleResize ДО создания инстанса
+        try { FAR._patchEmulatorJSResize(); } catch (e) {}
+
         const playerSelector = '#' + (rootContainer && rootContainer.id ? rootContainer.id : 'emulatorRoot');
 
         const config = {
@@ -394,6 +499,30 @@ FAR._createEmulatorInstance = function(rootContainer, resolve, reject) {
 
         window.EJS_emulator = new window.EmulatorJS(playerSelector, config);
 
+        // Патч на случай, если handleResize привязан как own-property
+        try { FAR._patchEmulatorJSInstanceResize(window.EJS_emulator); } catch (e) {}
+
+        // Сохраняем AudioContext — критично для остановки звука при закрытии.
+        try {
+            setTimeout(function() {
+                try {
+                    const emu = window.EJS_emulator;
+                    if (!emu) return;
+                    const c =
+                        (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
+                            emu.Module.AL.currentCtx.audioCtx) ||
+                        (emu.Module && emu.Module.audioContext) ||
+                        (emu.AudioContext) ||
+                        (emu.audioContext) ||
+                        null;
+                    if (c) {
+                        if (!Array.isArray(FAR._emuAudioContexts)) FAR._emuAudioContexts = [];
+                        if (FAR._emuAudioContexts.indexOf(c) === -1) FAR._emuAudioContexts.push(c);
+                    }
+                } catch (e) { /* ignore */ }
+            }, 100);
+        } catch (e) { /* ignore */ }
+
         if (typeof FAR._emuStateOnSave === 'function') {
             try {
                 window.EJS_emulator.on('saveState', FAR._emuStateOnSave);
@@ -436,37 +565,22 @@ FAR._destroyEmulator = function() {
     const emu = window.EJS_emulator;
 
     if (emu) {
-        try {
-            if (emu.Module && emu.Module.AL && emu.Module.AL.currentCtx &&
-                emu.Module.AL.currentCtx.audioCtx) {
-                try { emu.Module.AL.currentCtx.audioCtx.close(); } catch(e) {}
-            }
-        } catch (e) {}
-
-        try {
-            if (emu.gameManager && typeof emu.gameManager.toggleMainLoop === 'function') {
-                emu.gameManager.toggleMainLoop(0);
-            }
-        } catch (e) {}
-        try {
-            if (emu.Module && typeof emu.Module.pauseMainLoop === 'function') {
-                emu.Module.pauseMainLoop();
-            }
-        } catch (e) {}
-
-        try { if (typeof emu.pause === 'function') emu.pause(true); } catch (e) {}
-        try { if (typeof emu.destroy === 'function') emu.destroy(); } catch (e) {}
-
-        try {
-            if (emu.Module && typeof emu.Module.abort === 'function') {
-                emu.Module.abort();
-            }
-        } catch (e) {}
-
-        if (window.EJS_emulator === emu) {
-            try { window.EJS_emulator = null; } catch (e) {}
+        try { FAR._hardStopEmulatorJS(emu); } catch (e) {
+            console.warn('[emu destroy] _hardStopEmulatorJS:', e);
         }
     }
+
+    // Дополнительно: закрыть сохранённые AudioContext
+    try {
+        if (Array.isArray(FAR._emuAudioContexts)) {
+            for (const c of FAR._emuAudioContexts) {
+                try {
+                    if (c && typeof c.close === 'function' && c.state !== 'closed') c.close();
+                } catch (e) {}
+            }
+            FAR._emuAudioContexts = [];
+        }
+    } catch (e) {}
 
     if (FAR._emulatorKeyHandler) {
         try {
@@ -532,51 +646,29 @@ FAR.closeEmulatorViewer = function () {
     const modal = document.getElementById('emulatorViewerModal');
     if (modal) modal.classList.add('hidden');
 
-    // === 1. Жёстко останавливаем EmulatorJS ===
-    // Берём глобальную ссылку (её выставляет сам EmulatorJS при создании),
-    // а также — если у вас есть собственный трекинг-переменной —
-    // дополнительно её.
-    const candidates = [];
-    try { if (window.EJS_emulator) candidates.push(window.EJS_emulator); } catch (e) {}
-    try { if (FAR._emuInstance)   candidates.push(FAR._emuInstance);   } catch (e) {}
-
-    for (const emu of candidates) {
-        try { FAR._hardStopEmulatorJS(emu); } catch (e) { console.warn('[emu stop]', e); }
+    // === 1. Жёстко останавливаем EmulatorJS через _destroyEmulator ===
+    try { FAR._destroyEmulator(); } catch (e) {
+        console.warn('[closeEmulatorViewer] _destroyEmulator:', e);
     }
 
-    // Снимаем нашу ссылку (если она была)
-    try { FAR._emuInstance = null; } catch (e) {}
+    // === 2. Страховка ===
+    try { if (FAR._emulatorInstance) FAR._hardStopEmulatorJS(FAR._emulatorInstance); } catch (e) {}
+    try { if (window.EJS_emulator)    FAR._hardStopEmulatorJS(window.EJS_emulator);   } catch (e) {}
+    try { FAR._emulatorInstance = null; } catch (e) {}
+    try { if (window.EJS_emulator) window.EJS_emulator = null; } catch (e) {}
 
-    // === 2. Удаляем всё содержимое контейнера эмулятора ===
-    //     (после hardStop — это уже просто DOM-уборка)
-    const root = document.getElementById('emulatorRoot');
-    if (root) root.innerHTML = '';
+    // === 3. Сбрасываем контекст файла ===
+    FAR._emulatorCurrentItem = null;
+    FAR._emulatorCurrentSide = null;
 
-    // === 3. Снимаем виртуальный джойстик, если он был смонтирован ===
-    if (typeof FAR.VirtualGamepad !== 'undefined' && root) {
-        try { FAR.VirtualGamepad.unmount(root); } catch (e) {}
-    }
-
-    // === 4. Сбрасываем переменные текущего файла ===
-    FAR._emuCurrentItem = null;
-    FAR._emuCurrentSide = null;
-
-    // === 5. Отзываем blob URL'ы, если они где-то учитывались ===
-    if (Array.isArray(FAR._emuBlobUrls)) {
-        for (const u of FAR._emuBlobUrls) {
-            try { URL.revokeObjectURL(u); } catch (e) {}
-        }
-        FAR._emuBlobUrls = [];
-    }
-
-    // === 6. Обновляем кнопки навигации (◀/▶) — они привязаны к openFile ===
+    // === 4. Обновляем кнопки навигации ◀ / ▶ ===
     if (typeof FAR._viewerUpdateNavButtons === 'function') {
         try { FAR._viewerUpdateNavButtons(); } catch (e) {}
     }
 
-    // === 7. Убираем фокус с эмулятора, чтобы клавиатура перестала слать keydown ===
+    // === 5. Снимаем фокус ===
     try {
-        if (document.activeElement && root && root.contains(document.activeElement)) {
+        if (document.activeElement && document.activeElement !== document.body) {
             document.activeElement.blur();
         }
     } catch (e) {}

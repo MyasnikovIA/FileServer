@@ -75,28 +75,57 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
             instance.events().onStdout(line => console.log('[jsdos wm]', line));
         } catch (e) {}
 
-        instance.run(blobUrl).catch(e => console.error('[WM JSDOS] run error:', e));
+        // === Обработка ошибок запуска — с показом пользователю ===
+        let runFailed = false;
+        instance.run(blobUrl).catch(e => {
+            runFailed = true;
+            console.error('[WM JSDOS] run error:', e);
 
+            const rawMsg = (e && (e.message || String(e))) || 'unknown';
+            const combined = Array.isArray(e) ? String(e) : rawMsg;
+
+            let userMsg = 'Ошибка запуска jsdos';
+            if (combined.indexOf('dosbox.conf') !== -1 ||
+                combined.indexOf('Broken bundle') !== -1) {
+                userMsg =
+                    'Файл .jsdos повреждён или не является jsdos-бандлом.<br>' +
+                    '<small>Отсутствует <code>.jsdos/dosbox.conf</code>. ' +
+                    'Загрузите корректный .jsdos-архив.</small>';
+            } else {
+                userMsg = 'Ошибка: ' + FAR.escapeHtml(combined.substring(0, 200));
+            }
+
+            loading.innerHTML =
+                '<div class="jsdos-loading-text">' + userMsg + '</div>';
+            loading.classList.remove('hidden');
+        });
+
+        // Прячем лоадер только когда действительно появился canvas
         const checkCanvas = setInterval(() => {
+            if (runFailed) { clearInterval(checkCanvas); return; }
             const canvas = host.querySelector('canvas');
             if (canvas && canvas.width > 0) {
                 clearInterval(checkCanvas);
                 loading.classList.add('hidden');
-                window.dispatchEvent(new Event('resize'));
+                try { window.dispatchEvent(new Event('resize')); } catch (e) {}
             }
         }, 100);
 
+        // Долгий fallback — если canvas не появился, но и ошибки нет
         setTimeout(() => {
             clearInterval(checkCanvas);
-            loading.classList.add('hidden');
-            window.dispatchEvent(new Event('resize'));
-        }, 2000);
+            if (!runFailed) {
+                loading.classList.add('hidden');
+                try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+            }
+        }, 5000);
 
         if (typeof ResizeObserver !== 'undefined') {
             if (win.props._resizeObserver) {
                 try { win.props._resizeObserver.disconnect(); } catch (e) {}
             }
             win.props._resizeObserver = new ResizeObserver(function () {
+                if (runFailed) return;
                 const canvas = host.querySelector('canvas');
                 if (canvas) {
                     canvas.style.removeProperty('top');
@@ -105,7 +134,9 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
                     canvas.style.removeProperty('height');
                     canvas.style.removeProperty('position');
                 }
-                window.dispatchEvent(new Event('resize'));
+                // dispatchEvent теперь безопасен благодаря
+                // FAR._patchEmulatorJSResize (null-safe handleResize)
+                try { window.dispatchEvent(new Event('resize')); } catch (e) {}
             });
             win.props._resizeObserver.observe(win.bodyEl);
         }
@@ -119,13 +150,14 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
 
         FAR.setStatus('🕹️ JSDOS: ' + (item.name || item.path));
 
-        // === НОВОЕ: кнопки ◀ / ▶ в titlebar ===
+        // === Кнопки ◀ / ▶ в titlebar ===
         if (typeof FAR.WM._installViewerNavButtons === 'function') {
             try { FAR.WM._installViewerNavButtons(win, item, side); } catch (e) {}
         }
     } catch (e) {
         console.error('[WM JSDOS] failed:', e);
-        loading.innerHTML = '<div class="jsdos-loading-text">Ошибка запуска</div>';
+        loading.innerHTML = '<div class="jsdos-loading-text">Ошибка запуска: ' +
+            FAR.escapeHtml(e.message || String(e)) + '</div>';
     }
 };
 
@@ -206,16 +238,18 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         window.EJS_core = core;
         window.EJS_gameUrl = blobUrl;
         window.EJS_gameName = item.name;
-        window.EJS_pathtodata = 'lib/js-emulator/'; // Используем локальную папку проекта
+        window.EJS_pathtodata = 'lib/js-emulator/';
         window.EJS_color = '#89b4fa';
         window.EJS_startOnLoaded = true;
 
-        // Загружаем библиотеку
+        // Загружаем библиотеку (внутри патчится handleResize)
         if (!FAR._ejsLibraryLoaded) {
             await FAR._loadEmulatorLoader();
+        } else if (typeof FAR._patchEmulatorJSResize === 'function') {
+            try { FAR._patchEmulatorJSResize(); } catch (e) {}
         }
 
-        // Создаем инстанс через функцию из 30-emulator-viewer.js
+        // Создаём инстанс
         await new Promise((resolve, reject) => {
             FAR._createEmulatorInstance(host, resolve, reject);
         });
@@ -223,7 +257,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
         win.props._emulatorInstance = window.EJS_emulator;
         win.props._ejsOwnerWinId    = win.id;
 
-        // Ждем создания canvas
+        // Ждём создания canvas
         const waitStart = Date.now();
         while (!host.querySelector('canvas') && Date.now() - waitStart < 5000) {
             await new Promise(r => setTimeout(r, 100));
@@ -246,7 +280,8 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
                 try { win.props._resizeObserver.disconnect(); } catch (e) {}
             }
             win.props._resizeObserver = new ResizeObserver(function () {
-                window.dispatchEvent(new Event('resize'));
+                // Безопасно: prototype.handleResize пропатчен на null-safe
+                try { window.dispatchEvent(new Event('resize')); } catch (e) {}
             });
             win.props._resizeObserver.observe(win.bodyEl);
         }
@@ -257,7 +292,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
             FAR.VirtualGamepad.mount(host, core);
         }
 
-        // === НОВОЕ: кнопки ◀ / ▶ в titlebar (как у панорам/PDF/видео) ===
+        // === Кнопки ◀ / ▶ в titlebar (как у панорам/PDF/видео) ===
         if (typeof FAR.WM._installViewerNavButtons === 'function') {
             try { FAR.WM._installViewerNavButtons(win, item, side); } catch (e) {}
         }
@@ -272,14 +307,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
 // Финализация WM-окна.
 //
 // ВАЖНО: эта функция ПЕРЕОПРЕДЕЛЯЕТ версию из 47-wm-viewers.js,
-// поэтому обязана покрывать ВСЕ типы ресурсов:
-//   • ResizeObserver
-//   • VirtualGamepad (JSDOS / EmulatorJS)
-//   • JSDOS instance
-//   • EmulatorJS (жёсткая остановка через _hardStopEmulatorJS)
-//   • Pannellum
-//   • Browser API
-//   • Все виды blob URL
+// поэтому обязана покрывать ВСЕ типы ресурсов.
 // ============================================================
 FAR.WM._finalizeViewer = function (win) {
     if (!win || !win.props) return;
@@ -307,12 +335,7 @@ FAR.WM._finalizeViewer = function (win) {
         win.props._jsdosInstance = null;
     }
 
-    // --- EmulatorJS: ЖЁСТКАЯ остановка через общий хелпер ---
-    //
-    // Раньше здесь был только emu.pause() + обнуление window.EJS_emulator.
-    // Этого недостаточно — EmulatorJS держит AudioContext, который
-    // продолжает звучать. _hardStopEmulatorJS гасит AudioContext,
-    // останавливает игровой цикл, abort'ит WASM.
+    // --- EmulatorJS: ЖЁСТКАЯ остановка ---
     const emuCandidates = [];
     if (win.props._emulatorInstance) emuCandidates.push(win.props._emulatorInstance);
     try {
@@ -326,7 +349,6 @@ FAR.WM._finalizeViewer = function (win) {
             if (typeof FAR._hardStopEmulatorJS === 'function') {
                 FAR._hardStopEmulatorJS(emu);
             } else {
-                // Fallback, если 30-emulator-viewer.js ещё не загружен
                 try { if (typeof emu.pause === 'function') emu.pause(true); } catch (e) {}
                 try { if (typeof emu.destroy === 'function') emu.destroy(); } catch (e) {}
             }
@@ -335,11 +357,9 @@ FAR.WM._finalizeViewer = function (win) {
         }
     }
 
-    // Обнуляем ссылку на нашем окне
     win.props._emulatorInstance = null;
     win.props._ejsOwnerWinId = null;
 
-    // Если глобальная ссылка принадлежит этому окну — обнуляем
     try {
         if (window.EJS_emulator && win.props && win.props._ejsOwnerWinId === win.id) {
             window.EJS_emulator = null;
