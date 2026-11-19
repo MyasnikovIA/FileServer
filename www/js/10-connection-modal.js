@@ -4,25 +4,16 @@
 
 FAR._connModalState = {
     required: false,
-    side: null,       // 'left' | 'right' | null (обе панели)
+    side: null,
     busy: false
 };
 
-/**
- * Открывает модалку подключения.
- *
- * @param {boolean} [required] — если true, пользователь не может закрыть
- *                              без успешного подключения (кнопка ✕ и
- *                              «Отмена» скрыты)
- * @param {string}  [side]     — 'left' | 'right' — подключить только эту
- *                              панель. Если не указано — обе.
- */
 FAR.openConnModal = function (required, side) {
     FAR._connModalState.required = !!required;
     FAR._connModalState.side     = side || null;
     FAR._connModalState.busy     = false;
 
-    const modal      = document.getElementById('connModal');
+    const modal = document.getElementById('connModal');
     if (!modal) {
         console.error('[conn] #connModal не найден — проверьте modals/connection.html');
         return;
@@ -37,27 +28,19 @@ FAR.openConnModal = function (required, side) {
     const urlEl      = document.getElementById('connUrl');
     const userEl     = document.getElementById('connUser');
     const passEl     = document.getElementById('connPass');
-    const uiModeEl   = document.getElementById('connUiModeRow');
-    const uiModeSel  = document.getElementById('connUiMode');
 
-    // ============================================================
-    // Prefill: сохранённое соединение → глобальное → URL по умолчанию
-    // ============================================================
+    // ---- Prefill ----
     let prefill = null;
-
     if (side && typeof FAR.loadSideConnFromLS === 'function') {
         prefill = FAR.loadSideConnFromLS(side);
     }
-    if (!prefill) {
+    if (!prefill && typeof FAR.loadConnFromLS === 'function') {
         prefill = FAR.loadConnFromLS();
     }
-    if (!prefill) {
-        // Пользователь не авторизован / нет сохранённых данных —
-        // подставляем текущий origin + basePath + '/'
-        // Например, https://www.smwrap.ru/file/ (без index.html)
+    if (!prefill && typeof FAR.getDefaultConn === 'function') {
         prefill = FAR.getDefaultConn();
-        console.log('[conn] prefill default:', prefill.url);
     }
+    if (!prefill) prefill = { url: '', user: '', pass: '' };
 
     if (urlEl)  urlEl.value  = prefill.url  || '';
     if (userEl) userEl.value = prefill.user || '';
@@ -78,34 +61,39 @@ FAR.openConnModal = function (required, side) {
     if (closeBtn)  closeBtn.style.display  = required ? 'none' : '';
     if (cancelBtn) cancelBtn.style.display = required ? 'none' : '';
 
-    // ---- Выбор UI-режима: показываем только при полном подключении ----
-    if (uiModeEl) {
-        uiModeEl.style.display = (side ? 'none' : '');
-    }
-    if (uiModeSel) {
-        try {
-            const savedMode = localStorage.getItem(FAR.WM && FAR.WM.LS_MODE_KEY || 'filebd_ui_mode');
-            uiModeSel.value = (savedMode === 'wm') ? 'wm' : 'panel';
-        } catch (e) { uiModeSel.value = 'panel'; }
-    }
-
     if (errorEl) errorEl.textContent = '';
+
+    // ============================================================
+    // СКРЫВАЕМ экран Login, чтобы модалка отобразилась поверх всего
+    // ============================================================
+    if (typeof FAR.hideLoginScreen === 'function') {
+        FAR.hideLoginScreen();
+    }
 
     modal.classList.remove('hidden');
 
-    // Фокус в поле URL — выделяем текст, чтобы можно было сразу править
     setTimeout(function () {
         if (urlEl) { urlEl.focus(); urlEl.select(); }
     }, 50);
 };
 
 FAR.closeConnModal = function () {
-    if (FAR._connModalState.required) return; // нельзя закрыть при required
+    if (FAR._connModalState.required) return;
+
     const modal = document.getElementById('connModal');
     if (modal) modal.classList.add('hidden');
+
     FAR._connModalState.required = false;
     FAR._connModalState.side     = null;
     FAR._connModalState.busy     = false;
+
+    // ============================================================
+    // ВОЗВРАЩАЕМ экран Login, если пользователь не авторизовался
+    // (например, нажал «Отмена» или крестик)
+    // ============================================================
+    if (!FAR.db && typeof FAR.showLoginScreen === 'function') {
+        FAR.showLoginScreen();
+    }
 };
 
 FAR.submitConnModal = async function () {
@@ -116,7 +104,6 @@ FAR.submitConnModal = async function () {
     const passEl     = document.getElementById('connPass');
     const errorEl    = document.getElementById('connError');
     const connectBtn = document.getElementById('connConnectBtn');
-    const uiModeSel  = document.getElementById('connUiMode');
 
     const url  = (urlEl && urlEl.value || '').trim();
     const user = (userEl && userEl.value || '').trim();
@@ -134,7 +121,6 @@ FAR.submitConnModal = async function () {
 
     const side = FAR._connModalState.side;
     const cfg  = { url: url, user: user, pass: pass };
-    const uiMode = (uiModeSel && uiModeSel.value) || 'panel';
 
     if (typeof FAR.showLoading === 'function') {
         FAR.showLoading('Подключение к FileServer…', url);
@@ -147,9 +133,8 @@ FAR.submitConnModal = async function () {
         if (side && typeof FAR.applyConnectionToSide === 'function') {
             FAR.applyConnectionToSide(side, cfg, res.db, res.fullUrl);
             if (typeof FAR.loadFilesForSide === 'function') {
-                try {
-                    await FAR.loadFilesForSide(side, { path: '/', silent: true });
-                } catch (e) { console.warn('[conn] loadFilesForSide:', e); }
+                try { await FAR.loadFilesForSide(side, { path: '/', silent: true }); }
+                catch (e) { console.warn('[conn] loadFilesForSide:', e); }
             }
             if (typeof FAR.renderPanel === 'function') {
                 FAR.renderPanel(side, { skipLoad: true });
@@ -171,28 +156,42 @@ FAR.submitConnModal = async function () {
             }
         }
 
-        FAR.saveConnToLS(cfg);
+        if (typeof FAR.saveConnToLS === 'function') FAR.saveConnToLS(cfg);
 
-        if (typeof FAR.updateAuthUI === 'function')        FAR.updateAuthUI();
+        if (typeof FAR.updateAuthUI === 'function')         FAR.updateAuthUI();
         if (typeof FAR.updateConnIndicators === 'function') FAR.updateConnIndicators();
-        if (typeof FAR.setStatus === 'function')           FAR.setStatus('✅ Подключено: ' + res.fullUrl);
-        if (typeof FAR.toast === 'function')               FAR.toast('Подключение установлено', 'success');
+        if (typeof FAR.setStatus === 'function')            FAR.setStatus('✅ Подключено: ' + res.fullUrl);
+        if (typeof FAR.toast === 'function')                FAR.toast('Подключение установлено', 'success');
 
-        // Разрешаем закрыть (даже если required — соединение установлено)
         FAR._connModalState.required = false;
+
+        // Закрываем модалку. Так как FAR.db теперь задан,
+        // closeConnModal НЕ покажет экран Login.
         FAR.closeConnModal();
 
-        // ---- WM-режим ----
-        if (uiMode === 'wm'
-            && typeof FAR.WM !== 'undefined'
-            && !FAR.WM.state.active) {
+        // ============================================================
+        // Успешная авторизация: скрываем экран Login и входим в WM
+        // ============================================================
+        if (typeof FAR.hideLoginScreen === 'function') {
+            FAR.hideLoginScreen();
+        }
+
+        if (typeof FAR.WM !== 'undefined') {
             setTimeout(function () {
-                try { FAR.WM.enter(); }
-                catch (e) { console.warn('[conn] WM.enter:', e); }
+                try {
+                    if (FAR.WM.state.active) {
+                        if (typeof FAR.WM._renderDesktopIcons === 'function') FAR.WM._renderDesktopIcons();
+                        if (typeof FAR.WM._renderStartMenu   === 'function') FAR.WM._renderStartMenu('');
+                        if (typeof FAR.WM.updateTray         === 'function') FAR.WM.updateTray();
+                    } else {
+                        FAR.WM.enter();
+                    }
+                } catch (e) {
+                    console.warn('[conn] WM.enter:', e);
+                }
             }, 200);
         }
 
-        // ---- Восстановление UI-состояния ----
         if (typeof FAR.restoreUiState === 'function') {
             try { FAR.restoreUiState(); } catch (e) { /* ignore */ }
         }

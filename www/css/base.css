@@ -1,11 +1,105 @@
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* ============================================================
+   base.css — фундамент приложения (WM-only)
+   ============================================================ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
 body {
     font-family: 'Segoe UI', Arial, sans-serif;
-    background: #1e1e2e;
+    background: #0b1220;
     color: #cdd6f4;
-    padding: 10px;
-    height: 100vh;
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   Экран Login
+   z-index-иерархия:
+       #wmRoot          — 5000
+       .login-screen    — 6000 (этот файл)
+       .modal-overlay   — 9000+ (см. modal.css)
+       .toast-container — 9999+
+   ============================================================ */
+
+.login-screen {
+    position: fixed;
+    inset: 0;
     display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 40%, #1e1e2e 0%, #0b0b12 100%);
+    z-index: 6000; /* ВАЖНО: было 8000, из-за чего перекрывало модалки */
+    animation: login-screen-fade-in 0.25s ease-out;
+}
+
+.login-screen.hidden {
+    display: none;
+}
+
+@keyframes login-screen-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.login-screen-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 220px;
+    padding: 22px 72px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #1e1e2e;
+    background: linear-gradient(135deg, #89b4fa 0%, #74c7ec 100%);
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    box-shadow:
+            0 8px 32px rgba(137, 180, 250, 0.35),
+            inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.login-screen-btn:hover {
+    background: linear-gradient(135deg, #74c7ec 0%, #89dceb 100%);
+    transform: translateY(-3px);
+    box-shadow:
+            0 14px 40px rgba(137, 180, 250, 0.55),
+            inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.login-screen-btn:active {
+    transform: translateY(-1px);
+    box-shadow:
+            0 4px 16px rgba(137, 180, 250, 0.4),
+            inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.login-screen-btn:focus-visible {
+    outline: 3px solid #f9e2af;
+    outline-offset: 4px;
+}
+
+@media (max-width: 480px) {
+    .login-screen-btn {
+        font-size: 20px;
+        padding: 18px 48px;
+        min-width: 180px;
+    }
 }

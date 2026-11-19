@@ -1,11 +1,12 @@
 // ============================================================
-// Просмотр JSDOS-игр в полноэкранной модалке
+// 28-jsdos-viewer.js — Просмотр JSDOS-игр в полноэкранной модалке и WM
 // ============================================================
 
 FAR._jsdosInstance = null;       // Инстанс JsDos (возвращаемый dosObj.run)
 FAR._jsdosCurrentItem = null;    // fileIndex-элемент текущей игры
 FAR._jsdosCurrentUrl = null;     // Blob URL текущей игры
 FAR._jsdosBlobUrls = [];         // Все созданные Blob URL для очистки
+FAR._jsdosResizeObserver = null; // Наблюдатель за размером контейнера
 
 /**
  * Проверяет, является ли файл JSDOS-архивом.
@@ -17,7 +18,7 @@ FAR.isJsdos = function(item) {
 };
 
 /**
- * Открывает JSDOS-игру в полноэкранной модалке.
+ * Открывает JSDOS-игру.
  */
 FAR.openJsdosViewer = async function(item, side) {
     side = side || FAR.activePanel;
@@ -49,11 +50,16 @@ FAR.openJsdosViewer = async function(item, side) {
     const loadingText = document.getElementById('jsdosLoadingText');
     const root = document.getElementById('jsdosRoot');
 
-    title.textContent = '🕹️ ' + item.name;
-    info.textContent = '';
-    modal.classList.remove('hidden');
-    loading.classList.remove('hidden');
-    loadingText.textContent = 'Загрузка игры…';
+    // Если мы в WM, root может быть другим. Ищем его.
+    const actualRoot = root || document.querySelector('.jsdos-root') || document.querySelector('[data-role="root"]');
+
+    if (modal) {
+        title.textContent = '🕹️ ' + item.name;
+        info.textContent = '';
+        modal.classList.remove('hidden');
+        loading.classList.remove('hidden');
+        loadingText.textContent = 'Загрузка игры…';
+    }
 
     // Уничтожаем предыдущий инстанс
     if (FAR._jsdosInstance) {
@@ -61,8 +67,30 @@ FAR.openJsdosViewer = async function(item, side) {
         FAR._jsdosInstance = null;
     }
 
-    // Очищаем контейнер
-    root.innerHTML = '';
+    // Отключаем старый observer
+    if (FAR._jsdosResizeObserver) {
+        FAR._jsdosResizeObserver.disconnect();
+        FAR._jsdosResizeObserver = null;
+    }
+
+    if (actualRoot) actualRoot.innerHTML = '';
+
+    // Инжектим CSS для адаптивности холста (если еще не добавлен)
+    if (!document.getElementById('jsdos-responsive-css')) {
+        const style = document.createElement('style');
+        style.id = 'jsdos-responsive-css';
+        style.textContent = `
+            .jsdos-root canvas, #jsdosRoot canvas, .dosbox-container canvas {
+                width: 100% !important;
+                height: 100% !important;
+                object-fit: contain !important;
+                max-width: 100% !important;
+                max-height: 100% !important;
+                display: block !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
 
     // Загружаем файл из PouchDB конкретной панели
     let url = null;
@@ -73,15 +101,15 @@ FAR.openJsdosViewer = async function(item, side) {
         FAR._jsdosBlobUrls.push(url);
         FAR._jsdosCurrentUrl = url;
 
-        info.textContent = `📦 ${FAR.formatSize(data.length)}`;
+        if (info) info.textContent = `📦 ${FAR.formatSize(data.length)}`;
     } catch (e) {
         console.error('openJsdosViewer: readFileBodyFromSide failed:', e);
-        loading.classList.add('hidden');
+        if (loading) loading.classList.add('hidden');
         FAR.toast('Не удалось загрузить игру: ' + e.message, 'error');
         return;
     }
 
-    // Небольшая задержка, чтобы модалка успела отрисоваться
+    // Небольшая задержка, чтобы контейнер успел отрисоваться
     await new Promise(function(resolve) { setTimeout(resolve, 50); });
 
     // Запускаем DOS
@@ -91,17 +119,14 @@ FAR.openJsdosViewer = async function(item, side) {
 
         if (typeof window.emulators !== 'undefined') {
             window.emulators.pathPrefix = pathPrefix;
-            console.log('JSDOS: emulators.pathPrefix установлен');
-        } else {
-            console.warn('JSDOS: window.emulators не определён');
         }
 
-        FAR._jsdosInstance = window.Dos(root, {
+        FAR._jsdosInstance = window.Dos(actualRoot, {
             wdosboxUrl: pathPrefix + 'wdosbox.js',
             pathPrefix: pathPrefix
         });
 
-        loadingText.textContent = 'Запуск…';
+        if (loadingText) loadingText.textContent = 'Запуск…';
 
         try {
             FAR._jsdosInstance.events().onStdout(function(line) {
@@ -111,17 +136,25 @@ FAR.openJsdosViewer = async function(item, side) {
 
         await FAR._jsdosInstance.run(url);
 
-        loading.classList.add('hidden');
+        if (loading) loading.classList.add('hidden');
         FAR.setStatus('🕹️ JSDOS: ' + item.name);
         FAR.toast('Игра запущена', 'success');
 
-        // Переводим фокус в эмулятор, чтобы Enter/стрелки
-        // шли в JSDOS, а не в панели файлового менеджера
-        FAR._jsdosFocus(root);
+        // Настраиваем ResizeObserver
+        if (window.ResizeObserver && actualRoot) {
+            FAR._jsdosResizeObserver = new ResizeObserver(() => {
+                // Принудительно триггерим ресайз для внутренних скриптов DOSBox
+                window.dispatchEvent(new Event('resize'));
+            });
+            FAR._jsdosResizeObserver.observe(actualRoot);
+        }
+
+        // Переводим фокус в эмулятор
+        FAR._jsdosFocus(actualRoot);
 
     } catch (e) {
         console.error('openJsdosViewer: run failed:', e);
-        loading.classList.add('hidden');
+        if (loading) loading.classList.add('hidden');
         FAR.toast('Не удалось запустить игру: ' + e.message, 'error');
     }
 };
@@ -132,6 +165,12 @@ FAR.openJsdosViewer = async function(item, side) {
 FAR.closeJsdosViewer = function() {
     const modal = document.getElementById('jsdosViewerModal');
     if (modal) modal.classList.add('hidden');
+
+    // Отключаем observer
+    if (FAR._jsdosResizeObserver) {
+        FAR._jsdosResizeObserver.disconnect();
+        FAR._jsdosResizeObserver = null;
+    }
 
     // Останавливаем эмулятор
     if (FAR._jsdosInstance) {
@@ -144,12 +183,12 @@ FAR.closeJsdosViewer = function() {
     FAR._jsdosBlobUrls = [];
     FAR._jsdosCurrentUrl = null;
 
-    // Очищаем контейнер
-    const root = document.getElementById('jsdosRoot');
-    if (root) root.innerHTML = '';
+    // Очищаем контейнеры
+    const roots = document.querySelectorAll('.jsdos-root, #jsdosRoot, .dosbox-container');
+    roots.forEach(r => r.innerHTML = '');
 
     // Возвращаем фокус в файловый менеджер
-    FAR._jsdosBlur(root);
+    FAR._jsdosBlur(document.getElementById('jsdosRoot'));
 
     FAR._jsdosCurrentItem = null;
     FAR._jsdosCurrentSide = null;
@@ -159,9 +198,6 @@ FAR.closeJsdosViewerOutside = function(e) {
     if (e.target === e.currentTarget) FAR.closeJsdosViewer();
 };
 
-/**
- * Скачивает оригинальный .jsdos файл.
- */
 FAR.downloadCurrentJsdos = async function() {
     if (!FAR._jsdosCurrentItem) {
         FAR.toast('Нет активной игры', 'warning');
@@ -178,21 +214,12 @@ FAR.downloadCurrentJsdos = async function() {
     }
 };
 
-/**
- * Переводит фокус на контейнер JSDOS, чтобы клавиатура уходила
- * внутрь эмулятора, а не в панели файлового менеджера.
- */
 FAR._jsdosFocus = function(root) {
     if (!root) return;
-
     try {
         root.setAttribute('tabindex', '0');
         root.focus();
     } catch (e) { /* ignore */ }
-
-    // JSDOS создаёт внутри .jsdos-root свой canvas. Пробуем
-    // сфокусировать его тоже — некоторые версии DOSBox слушают
-    // клавиатуру именно на canvas.
     try {
         const canvas = root.querySelector('canvas');
         if (canvas) {
@@ -202,21 +229,15 @@ FAR._jsdosFocus = function(root) {
     } catch (e) { /* ignore */ }
 };
 
-/**
- * Снимает фокус с контейнера JSDOS и возвращает его в файловый
- * менеджер, чтобы клавиши снова обрабатывались панелями FAR.
- */
 FAR._jsdosBlur = function(root) {
     try {
         if (root) root.blur();
     } catch (e) { /* ignore */ }
-
     try {
         if (document.activeElement && document.activeElement !== document.body) {
             document.activeElement.blur();
         }
     } catch (e) { /* ignore */ }
-
     try {
         document.body.focus();
     } catch (e) { /* ignore */ }

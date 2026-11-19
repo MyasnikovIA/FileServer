@@ -1,5 +1,5 @@
 // ============================================================
-// 42-wm-startmenu.js — меню Пуск с категориями и подменю
+// 42-wm-startmenu.js — меню Пуск
 // ============================================================
 
 FAR.WM.toggleStartMenu = function () {
@@ -34,10 +34,6 @@ FAR.WM.closeStartMenu = function () {
     FAR.WM._hideStartSubmenu();
 };
 
-// ============================================================
-// Категории приложений
-// ============================================================
-
 FAR.WM.APP_CATEGORIES = [
     { id: 'files',  title: 'Файлы и документы',      icon: '📁' },
     { id: 'media',  title: 'Медиа',                   icon: '🖼' },
@@ -49,32 +45,21 @@ FAR.WM.APP_CATEGORIES = [
 ];
 
 FAR.WM.APP_CATEGORY_MAP = {
-    // 📁 Файлы и документы
     explorer:   'files',
     viewer:     'files',
     texteditor: 'files',
     pdf:        'files',
     browser:    'files',
-
-    // 🖼 Медиа
     panorama:   'media',
     panoeditor: 'media',
     mp3:        'media',
     video:      'media',
-
-    // 🎮 Игры
     jsdos:      'games',
     nes:        'games',
     emulator:   'games',
-
-    // 🦙 ИИ
     ollama:     'ai',
-
-    // 📡 Трансляции
     videochat:   'stream',
     broadcaster: 'stream',
-
-    // ⚙️ Система
     connect:   'system',
     gamepad:   'system',
     gpu:       'system',
@@ -83,30 +68,19 @@ FAR.WM.APP_CATEGORY_MAP = {
     console:   'system'
 };
 
-// ============================================================
-// Всплывающее подменю
-// ============================================================
+// ---- Подменю ----
 
 FAR.WM._startSubmenuEl       = null;
 FAR.WM._startSubmenuTimer    = null;
 FAR.WM._startSubmenuCategory = null;
 
-/**
- * Ленивая инициализация подменю.
- *
- * ВАЖНО: добавляем внутрь #wmRoot, а не в document.body.
- * Причина: #wmStartMenu использует backdrop-filter, из-за чего
- * браузер может «поднять» его над sibling-элементами в body.
- * Внутри #wmRoot оба элемента в одном stacking context —
- * z-index работает предсказуемо.
- */
 FAR.WM._ensureStartSubmenu = function () {
     if (FAR.WM._startSubmenuEl) return FAR.WM._startSubmenuEl;
 
     const el = document.createElement('div');
     el.className = 'wm-start-submenu';
     el.style.position = 'fixed';
-    el.style.zIndex   = '9999';        // выше всего в #wmRoot
+    el.style.zIndex   = '9999';
     el.style.display  = 'none';
 
     el.addEventListener('mouseenter', function () {
@@ -118,10 +92,7 @@ FAR.WM._ensureStartSubmenu = function () {
     el.addEventListener('mouseleave', function () {
         FAR.WM._scheduleHideStartSubmenu();
     });
-    // Клики внутри submenu не должны закрывать меню Пуск
-    el.addEventListener('mousedown', function (e) {
-        e.stopPropagation();
-    });
+    el.addEventListener('mousedown', function (e) { e.stopPropagation(); });
 
     const root = document.getElementById('wmRoot') || document.body;
     root.appendChild(el);
@@ -186,7 +157,6 @@ FAR.WM._showStartSubmenu = function (rowEl, categoryId, categoryIcon,
         el.appendChild(item);
     });
 
-    // Показываем невидимо, чтобы измерить размеры
     el.style.display    = 'block';
     el.style.visibility = 'hidden';
     el.style.left       = '0px';
@@ -201,15 +171,10 @@ FAR.WM._showStartSubmenu = function (rowEl, categoryId, categoryIcon,
     let left = rect.right + margin;
     let top  = rect.top;
 
-    // Не помещается справа — открываем слева
     if (left + subRect.width > vw - margin) {
         left = rect.left - subRect.width - margin;
-        if (left < margin) {
-            left = Math.max(margin, vw - subRect.width - margin);
-        }
+        if (left < margin) left = Math.max(margin, vw - subRect.width - margin);
     }
-
-    // Не помещается снизу — сдвигаем вверх
     if (top + subRect.height > vh - margin) {
         top = vh - subRect.height - margin;
         if (top < margin) top = margin;
@@ -226,10 +191,6 @@ FAR.WM._showStartSubmenu = function (rowEl, categoryId, categoryIcon,
     });
     rowEl.classList.add('active');
 };
-
-// ============================================================
-// Рендер списка
-// ============================================================
 
 FAR.WM._renderStartMenu = function (query) {
     const list = document.getElementById('wmStartList');
@@ -249,18 +210,13 @@ FAR.WM._renderStartMenu = function (query) {
 
     list.innerHTML = '';
 
-    // ============================================================
-    // Режим поиска: плоский список
-    // ============================================================
     if (q) {
         FAR.WM._hideStartSubmenu();
-
         if (filtered.length === 0) {
             list.innerHTML = '<div style="text-align:center;color:#6c7086;' +
                 'padding:20px;font-size:12px;">Ничего не найдено</div>';
             return;
         }
-
         filtered.forEach(function (app) {
             const item = document.createElement('div');
             item.className = 'wm-start-item';
@@ -278,14 +234,8 @@ FAR.WM._renderStartMenu = function (query) {
         return;
     }
 
-    // ============================================================
-    // Обычный режим: строки категорий + submenu
-    // ============================================================
-
     const buckets = {};
-    FAR.WM.APP_CATEGORIES.forEach(function (cat) {
-        buckets[cat.id] = [];
-    });
+    FAR.WM.APP_CATEGORIES.forEach(function (cat) { buckets[cat.id] = []; });
     filtered.forEach(function (a) {
         const catId = FAR.WM.APP_CATEGORY_MAP[a.id] || 'other';
         if (!buckets[catId]) buckets[catId] = [];
@@ -337,10 +287,6 @@ FAR.WM._renderStartMenu = function (query) {
     }
 };
 
-// ============================================================
-// Привязка UI
-// ============================================================
-
 FAR.WM._bindStartMenuUI = function () {
     const btn = document.getElementById('wmStartBtn');
     if (btn && !btn._wmBound) {
@@ -381,13 +327,50 @@ FAR.WM.exit = function () {
 };
 
 // ============================================================
-// Logout
+// Logout — полный выход из системы
 // ============================================================
 
 FAR.WM.logout = function () {
     FAR.WM.closeStartMenu();
-    if (typeof FAR.onAuthButton === 'function') {
-        FAR.WM.exit();
-        FAR.onAuthButton();
+
+    // 1. Отзыв токена (best-effort)
+    try {
+        if (FAR.db && FAR.authToken && typeof FAR.FsClient.logout === 'function') {
+            const baseUrl = FAR.db.baseUrl || FAR.db._originalUrl || '';
+            if (baseUrl) {
+                FAR.FsClient.logout(baseUrl, FAR.authToken).catch(function () {});
+            }
+        }
+    } catch (e) { /* ignore */ }
+
+    // 2. Закрываем WM и очищаем сохранённый layout
+    try { FAR.WM.exit(); } catch (e) { /* ignore */ }
+    try { FAR.WM.clearWindowState(); } catch (e) { /* ignore */ }
+
+    // 3. Чистим локальное состояние
+    try { FAR.clearConnFromLS(); } catch (e) { /* ignore */ }
+    try { FAR.clearAuthToken(); } catch (e) { /* ignore */ }
+
+    FAR.db = null;
+    FAR.currentConn = null;
+    if (FAR.side) {
+        if (FAR.side.left)  FAR.side.left.db  = null;
+        if (FAR.side.right) FAR.side.right.db = null;
+    }
+
+    if (typeof FAR.updateAuthUI === 'function') {
+        try { FAR.updateAuthUI(); } catch (e) { /* ignore */ }
+    }
+    if (typeof FAR.setStatus === 'function') {
+        try { FAR.setStatus('🔐 Сессия завершена'); } catch (e) { /* ignore */ }
+    }
+
+    // 4. Показываем экран Login
+    if (typeof FAR.showLoginScreen === 'function') {
+        FAR.showLoginScreen();
+    }
+
+    if (typeof FAR.toast === 'function') {
+        FAR.toast('Вы вышли из системы', 'info');
     }
 };

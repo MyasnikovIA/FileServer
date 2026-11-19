@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FAR-менеджер — FileServer</title>
+    <title>FileBD Manager — Рабочий стол</title>
 
     <script src="lib/jszip/jszip.min.js"></script>
 
@@ -43,75 +43,62 @@
 </head>
 <body>
 
-<div class="toolbar">
-    <button onclick="FAR.uploadFile()" id="btnUpload" disabled>📤 Загрузить</button>
-    <button onclick="FAR.createFolder()" id="btnMkdir" disabled>📁 Создать папку</button>
-    <button onclick="FAR.copySelected()" class="btn-success" id="btnCopy" disabled>📋 → Копировать</button>
-    <button onclick="FAR.moveSelected()" class="btn-move" id="btnMove" disabled>✂️ → Перенести</button>
-    <button onclick="FAR.downloadSelectedUncompressed()" class="btn-download" id="btnDownload" disabled>📥 → Скачать</button>
-    <button onclick="FAR.downloadSelectedAsZip()" class="btn-zip" id="btnZip" disabled>🗜️ → Скачать ZIP</button>
-    <button onclick="FAR.deleteSelected()" class="btn-danger" id="btnDelete" disabled>🗑️ Удалить</button>
-    <button onclick="FAR.refreshFiles()" class="btn-warning" id="btnRefresh" disabled>🔄 Обновить</button>
-    <button onclick="FAR.showDebug()" id="btnDebug" title="Показать структуру" disabled>🔍 Debug</button>
-    <button onclick="FAR.openGamepadSetup()" id="btnGamepad" title="Настроить джойстик">🎮 Джойстик</button>
-    <button onclick="FAR.openGpuMonitor()" id="btnGpu" title="Мониторинг видеокарт (nvidia-smi)">🎮 GPU</button>
-    <button onclick="FAR.openOllama()" id="btnOllama" title="Ollama Chat (локальная LLM)">🦙 Ollama</button>
-    <button onclick="FAR.openConsole()" id="btnConsole" title="Терминал (только для разрешённых пользователей)" style="display:none;">🖥️ Консоль</button>
-    <button onclick="FAR.openVideoChat()" id="btnVideoChat" title="Смотреть трансляцию" style="display:none;">📺 Трансляция</button>
-    <button onclick="FAR.openBroadcaster()" id="btnBroadcast" title="Начать трансляцию с камеры" style="display:none;">🎥 Вещать</button>
-    <button onclick="FAR.onAuthButton()" class="btn-auth" id="btnAuth" title="Войти / Выйти">🔐 LogIn</button>
-    <button onclick="FAR.WM.toggle()" id="btnWM" title="Оконный режим">🖥 Рабочий стол</button>
-    <button onclick="FAR.gamepadModeCycle()"
-            oncontextmenu="event.preventDefault(); FAR.openGamepadSetup();"
-            class="gp-mode-indicator gp-mode-files"
-            id="gpModeIndicator"
-            title="ЛКМ — переключить режим, ПКМ — настройка">🎮 Файлы</button>
-    <span style="color:#a6adc8;font-size:12px;margin-left:auto;" id="statusText">Инициализация…</span>
+<!-- ============================================================
+     Скрытый storage для элементов, на которые ссылается
+     внутренняя логика. Пользователь их не видит.
+     ВАЖНО: #listLeft / #listRight ОБЯЗАТЕЛЬНЫ — их клонирует
+     WM Explorer в окна Проводника.
+     ============================================================ -->
+<div id="panelModeStorage" style="display:none;" aria-hidden="true">
+    <button id="btnUpload" disabled></button>
+    <button id="btnMkdir" disabled></button>
+    <button id="btnCopy" disabled></button>
+    <button id="btnMove" disabled></button>
+    <button id="btnDownload" disabled></button>
+    <button id="btnZip" disabled></button>
+    <button id="btnDelete" disabled></button>
+    <button id="btnRefresh" disabled></button>
+    <button id="btnDebug" disabled></button>
+    <button id="btnGamepad"></button>
+    <button id="btnGpu"></button>
+    <button id="btnOllama"></button>
+    <button id="btnConsole" style="display:none;"></button>
+    <button id="btnVideoChat" style="display:none;"></button>
+    <button id="btnBroadcast" style="display:none;"></button>
+    <button id="btnAuth"></button>
+    <button id="btnWM"></button>
+    <button id="gpModeIndicator"></button>
+
+    <div id="panelLeft"><div class="file-list" id="listLeft"></div></div>
+    <div id="panelRight"><div class="file-list" id="listRight"></div></div>
+
+    <span id="statusText"></span>
+    <span id="statusLeft"></span>
+    <span id="statusRight"></span>
+    <span id="totalSize"></span>
+    <span id="selInfo"></span>
+    <span id="pathLeft"></span>
+    <span id="pathRight"></span>
 </div>
 
-<div class="panels">
-    <div class="panel active" id="panelLeft" onclick="FAR.setActivePanel('left')">
-        <div class="panel-header">
-            <span class="path" id="pathLeft">/</span>
-            <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'left')" title="Сменить сервер для левой панели">🗄️</button>
-                <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '..')">⬆</button>
-                <button onclick="event.stopPropagation(); FAR.navigatePanel('left', '/')">🏠</button>
-            </div>
-        </div>
-        <div class="file-list" id="listLeft"></div>
-        <div class="drop-hint" id="dropHintLeft">
-            <div class="drop-icon">📥</div>
-            <div>Отпустите, чтобы загрузить</div>
-            <div class="drop-path" id="dropPathLeft">/</div>
-        </div>
-    </div>
-    <div class="panel" id="panelRight" onclick="FAR.setActivePanel('right')">
-        <div class="panel-header">
-            <span class="path" id="pathRight">/</span>
-            <div class="nav-buttons">
-                <button onclick="event.stopPropagation(); FAR.openConnModal(false, 'right')" title="Сменить сервер для правой панели">🗄️</button>
-                <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '..')">⬆</button>
-                <button onclick="event.stopPropagation(); FAR.navigatePanel('right', '/')">🏠</button>
-            </div>
-        </div>
-        <div class="file-list" id="listRight"></div>
-        <div class="drop-hint" id="dropHintRight">
-            <div class="drop-icon">📥</div>
-            <div>Отпустите, чтобы загрузить</div>
-            <div class="drop-path" id="dropPathRight">/</div>
-        </div>
-    </div>
-</div>
-
-<div class="status-bar">
-    <span id="statusLeft">Левая: 0</span>
-    <span id="statusRight">Правая: 0</span>
-    <span class="total-size" id="totalSize">💾 Всего: 0 B • файлов: 0 • папок: 0</span>
-    <span class="sel-info" id="selInfo"></span>
-</div>
-
+<!-- ============================================================
+     Сюда 23-main.js (injectModals) вставит все модалки.
+     ВАЖНО: оставьте этот div ПУСТЫМ.
+     ============================================================ -->
 <div id="modalRoot"></div>
+
+<!-- ============================================================
+     Экран Login — показывается неавторизованному пользователю.
+     Одна кнопка по центру. Пока пользователь не авторизуется,
+     ничего другого он не видит (кроме самой модалки подключения).
+     z-index: 8000 (см. css/base.css).
+     ============================================================ -->
+<div id="loginScreen" class="login-screen hidden">
+    <button type="button" class="login-screen-btn" onclick="FAR.openConnModal(false)">
+        Login
+    </button>
+</div>
+
 <div class="toast-container" id="toastContainer"></div>
 
 <!-- Pannellum -->

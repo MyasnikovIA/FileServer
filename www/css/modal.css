@@ -1,6 +1,7 @@
 .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.85);
-    z-index: 1000; display: flex; align-items: center; justify-content: center;
+    z-index: 9000; /* ВАЖНО: было 1000, из-за чего модалка уходила под .login-screen */
+    display: flex; align-items: center; justify-content: center;
     padding: 20px;
 }
 .modal-overlay.hidden { display: none; }

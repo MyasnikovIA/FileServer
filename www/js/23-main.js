@@ -1,24 +1,48 @@
 // ============================================================
-// Точка входа: загрузка модалок, инициализация, автоподключение
+// 23-main.js — точка входа: загрузка модалок, инициализация,
+// автоподключение, управление экраном Login.
 // ============================================================
 
-FAR.loadModalFragment = function(path) {
+// ============================================================
+// Экран Login — безопасные функции
+// ============================================================
+
+FAR.showLoginScreen = function () {
+    const el = document.getElementById('loginScreen');
+    if (el) el.classList.remove('hidden');
+
+    if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active) {
+        try { FAR.WM.exit(); } catch (e) { /* ignore */ }
+    }
+};
+
+FAR.hideLoginScreen = function () {
+    const el = document.getElementById('loginScreen');
+    if (el) el.classList.add('hidden');
+};
+
+// ============================================================
+// Загрузка модалок (ТЕПЕРЬ АСИНХРОННАЯ)
+// ============================================================
+
+FAR.loadModalFragment = async function (path) {
     try {
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', path, false);
-        xhr.send(null);
-        if (xhr.status === 0 || (xhr.status >= 200 && xhr.status < 300)) {
-            return xhr.responseText;
-        }
-        throw new Error('HTTP ' + xhr.status);
+        const res = await fetch(path, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.text();
     } catch (e) {
-        console.error('Не удалось загрузить ' + path + ':', e);
+        console.error('[main] Не удалось загрузить ' + path + ':', e);
         return '<!-- Ошибка загрузки ' + path + ' -->';
     }
 };
 
-FAR.injectModals = function() {
+FAR.injectModals = async function () {
     const root = document.getElementById('modalRoot');
+    if (!root) {
+        console.error('[main] #modalRoot не найден');
+        return;
+    }
+
     const files = [
         'modals/connection.html',
         'modals/viewer.html',
@@ -31,7 +55,6 @@ FAR.injectModals = function() {
         'modals/console.html',
         'modals/videochat-viewer.html',
         'modals/videochat-broadcaster.html',
-        // 'modals/nes-viewer.html',  <-- УДАЛЕНО
         'modals/emulator-viewer.html',
         'modals/pdf-viewer.html',
         'modals/lbrn2-viewer.html',
@@ -46,9 +69,10 @@ FAR.injectModals = function() {
         'modals/desktop.html',
         'modals/wm-file-dialog.html'
     ];
+
     let html = '';
     for (const f of files) {
-        html += FAR.loadModalFragment(f) + '\n';
+        html += await FAR.loadModalFragment(f) + '\n';
     }
     root.innerHTML = html;
 };
@@ -56,8 +80,9 @@ FAR.injectModals = function() {
 // ============================================================
 // Старт
 // ============================================================
-document.addEventListener('DOMContentLoaded', async function() {
-    FAR.injectModals();
+document.addEventListener('DOMContentLoaded', async function () {
+    // Ждём, пока все модалки загрузятся в DOM
+    await FAR.injectModals();
 
     if (typeof FAR.setupPanelDbSwitcher === 'function') {
         FAR.setupPanelDbSwitcher();
@@ -66,40 +91,30 @@ document.addEventListener('DOMContentLoaded', async function() {
         FAR.updateConnIndicators();
     }
 
-    FAR.updateAuthUI();
-    FAR.renderPanel('left');
-    FAR.renderPanel('right');
+    if (typeof FAR.updateAuthUI === 'function') {
+        FAR.updateAuthUI();
+    }
 
     FAR.setupPanelDragDrop('panelLeft');
     FAR.setupPanelDragDrop('panelRight');
 
-    window.addEventListener('dragover', function(e) { e.preventDefault(); });
-    window.addEventListener('drop',     function(e) { e.preventDefault(); });
+    window.addEventListener('dragover', function (e) { e.preventDefault(); });
+    window.addEventListener('drop',     function (e) { e.preventDefault(); });
 
-    FAR.setupKeyboard();
-    FAR.setupGamepadAuto();
-    FAR.setupPanelContextMenu();
+    if (typeof FAR.setupKeyboard === 'function') FAR.setupKeyboard();
+    if (typeof FAR.setupGamepadAuto === 'function') FAR.setupGamepadAuto();
+    if (typeof FAR.setupPanelContextMenu === 'function') FAR.setupPanelContextMenu();
 
-    if (typeof FAR.initBrowser === 'function') {
-        FAR.initBrowser();
-    }
+    if (typeof FAR.initBrowser === 'function') FAR.initBrowser();
     if (typeof FAR.initConsole === 'function') FAR.initConsole();
 
-    if (typeof FAR.WM !== 'undefined') {
-        setTimeout(function () {
-            if (typeof FAR.WM.updateTray === 'function') {
-                FAR.WM.updateTray();
-            }
-        }, 500);
-    }
-
-    FAR._installPannellumDbWrapper();
+    if (typeof FAR._installPannellumDbWrapper === 'function') FAR._installPannellumDbWrapper();
 
     if (typeof FAR.restoreAuthTokenFromCookie === 'function') {
         FAR.restoreAuthTokenFromCookie();
     }
 
-    const savedGlobal = FAR.loadConnFromLS();
+    const savedGlobal = (typeof FAR.loadConnFromLS === 'function') ? FAR.loadConnFromLS() : null;
     const savedLeft   = (typeof FAR.loadSideConnFromLS === 'function')
         ? FAR.loadSideConnFromLS('left')  : null;
     const savedRight  = (typeof FAR.loadSideConnFromLS === 'function')
@@ -107,58 +122,76 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     const saved = savedGlobal || savedLeft || savedRight;
 
-    if (saved) {
+    // ============================================================
+    // Пользователь не авторизован → только кнопка Login по центру
+    // ============================================================
+    if (!saved) {
+        if (typeof FAR.setStatus === 'function') FAR.setStatus('🔐 Требуется вход');
+        FAR.showLoginScreen();
+        return;
+    }
+
+    // ============================================================
+    // Есть сохранённое соединение → пробуем автологин
+    // ============================================================
+    if (typeof FAR.setStatus === 'function') {
         FAR.setStatus('🔌 Подключение с сохранёнными данными…');
+    }
+    if (typeof FAR.showLoading === 'function') {
         FAR.showLoading('Подключение к FileServer…', saved.url);
-        try {
-            const res = await FAR.connectToDb(saved);
+    }
 
+    try {
+        const res = await FAR.connectToDb(saved);
+
+        if (typeof FAR.applyConnectionToBoth === 'function') {
             FAR.applyConnectionToBoth(saved, res.db, res.fullUrl);
+        }
 
-            FAR.hideLoading();
-            FAR.updateAuthUI();
-            FAR.setStatus(`✅ Подключено: ${res.fullUrl}`);
-            FAR.toast('Подключение восстановлено', 'success');
+        if (typeof FAR.hideLoading === 'function') FAR.hideLoading();
+        FAR.hideLoginScreen();
 
-            await FAR.loadFilesForSide('left',  { path: '/', silent: true });
-            await FAR.loadFilesForSide('right', { path: '/', silent: true });
+        if (typeof FAR.updateAuthUI === 'function') FAR.updateAuthUI();
+        if (typeof FAR.setStatus === 'function') FAR.setStatus('✅ Подключено: ' + res.fullUrl);
+        if (typeof FAR.toast === 'function') FAR.toast('Подключение восстановлено', 'success');
 
+        if (typeof FAR.loadFilesForSide === 'function') {
+            try {
+                await FAR.loadFilesForSide('left',  { path: '/', silent: true });
+                await FAR.loadFilesForSide('right', { path: '/', silent: true });
+            } catch (e) { console.warn('[main] loadFilesForSide:', e); }
+        }
+
+        if (typeof FAR.renderPanel === 'function') {
             FAR.renderPanel('left',  { skipLoad: true });
             FAR.renderPanel('right', { skipLoad: true });
-
-            FAR.restoreUiState();
-
-            if (typeof FAR.updateConnIndicators === 'function') {
-                FAR.updateConnIndicators();
-            }
-
-            if (typeof FAR.WM !== 'undefined' && typeof FAR.WM.getSavedMode === 'function') {
-                const savedMode = FAR.WM.getSavedMode();
-                if (savedMode === 'wm' && !FAR.WM.state.active) {
-                    setTimeout(function () {
-                        try {
-                            FAR.WM.enter();
-                        } catch (e) {
-                            console.warn('[WM] restore mode failed:', e);
-                        }
-                    }, 200);
-                }
-            }
-        } catch (e) {
-            FAR.hideLoading();
-            console.error('auto-connect error:', e);
-
-            FAR.side.left  = FAR.createSideContext('left');
-            FAR.side.right = FAR.createSideContext('right');
-            FAR.currentConn = null;
-
-            FAR.updateAuthUI();
-            FAR.setStatus('❌ Ошибка автоподключения: ' + e.message);
-            FAR.toast('Не удалось подключиться с сохранёнными данными', 'error');
-            FAR.openConnModal(true);
         }
-    } else {
-        FAR.setStatus('🔐 Требуется вход');
-        FAR.openConnModal(true);
+
+        if (typeof FAR.restoreUiState === 'function') {
+            try { FAR.restoreUiState(); } catch (e) { /* ignore */ }
+        }
+
+        if (typeof FAR.updateConnIndicators === 'function') {
+            FAR.updateConnIndicators();
+        }
+
+        // === Входим в WM (единственный режим проекта) ===
+        if (typeof FAR.WM !== 'undefined') {
+            try { FAR.WM.enter(); }
+            catch (e) { console.warn('[main] WM.enter:', e); }
+        }
+    } catch (e) {
+        if (typeof FAR.hideLoading === 'function') FAR.hideLoading();
+        console.error('[main] auto-connect error:', e);
+
+        FAR.side.left  = FAR.createSideContext('left');
+        FAR.side.right = FAR.createSideContext('right');
+        FAR.currentConn = null;
+
+        if (typeof FAR.updateAuthUI === 'function') FAR.updateAuthUI();
+        if (typeof FAR.setStatus === 'function') FAR.setStatus('❌ Ошибка автоподключения: ' + e.message);
+        if (typeof FAR.toast === 'function') FAR.toast('Не удалось подключиться с сохранёнными данными', 'error');
+
+        FAR.showLoginScreen();
     }
 });

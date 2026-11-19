@@ -1,6 +1,5 @@
 // ============================================================
 // 04a-fs-client.js — PouchDB-совместимый клиент к FileServer.
-// Поддерживает Basic Auth и Bearer-токен.
 // ============================================================
 
 FAR.FsClient = function (baseUrl, opts) {
@@ -16,8 +15,15 @@ FAR.FsClient = function (baseUrl, opts) {
     this.onFileEvent = null;
 };
 
+// Вспомогательная функция для безопасного кодирования пути и параметров.
+// encodeURIComponent не кодирует !'()* , а Java HttpServer на них падает.
+FAR.FsClient._encodePathPart = function(part) {
+    return encodeURIComponent(part).replace(/[!'()*]/g, function(c) {
+        return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+    });
+};
+
 FAR.FsClient.prototype._authHeader = function () {
-    // Приоритет: Bearer-токен (когда он есть — используем только его)
     if (this.token) return 'Bearer ' + this.token;
     if (!this.user) return null;
     const raw = this.user + ':' + (this.pass || '');
@@ -30,30 +36,12 @@ FAR.FsClient.prototype._authHeader = function () {
 FAR.FsClient.prototype._fetch = function (url, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
-    // Cookie отправляются автоматически и сохраняются из ответов.
     opts.credentials = 'include';
     const auth = this._authHeader();
     if (auth) opts.headers['Authorization'] = auth;
     return fetch(url, opts);
 };
 
-// ============================================================
-// Ретраи для идемпотентных запросов.
-//
-// Зачем: при параллельных копированиях сервер может ответить
-// 5xx (временная перегрузка / гонка за директорию / race при
-// создании временного файла). Повтор с экспоненциальной паузой
-// почти всегда проходит со второй-третьей попытки.
-//
-// ВАЖНО: opts.body должен быть ArrayBuffer/Uint8Array/undefined —
-// он не «вычитывается» fetch'ем, поэтому повтор безопасен.
-// ReadableStream повторять нельзя — здесь такие тела не используются.
-//
-// Параметры:
-//   maxAttempts = 4           — всего попыток (1 + 3 ретрая)
-//   delays      = [150,400,900,1800] мс  — паузы перед 2-й, 3-й, 4-й попыткой
-//                                          (плюс джиттер 0–100 мс)
-// ============================================================
 FAR.FsClient.prototype._fetchWithRetry = async function (url, opts, retryOpts) {
     opts = opts || {};
     retryOpts = retryOpts || {};
@@ -68,10 +56,8 @@ FAR.FsClient.prototype._fetchWithRetry = async function (url, opts, retryOpts) {
         try {
             const res = await this._fetch(url, opts);
 
-            // Ретраим 5xx (500, 502, 503, 504) — кроме последней попытки
             const is5xx = res.status >= 500 && res.status < 600;
             if (is5xx && attempt < maxAttempts - 1) {
-                // Сливаем тело, чтобы освободить соединение
                 try { await res.text(); } catch (e) { /* ignore */ }
 
                 const base = delays[attempt] || delays[delays.length - 1];
@@ -89,7 +75,6 @@ FAR.FsClient.prototype._fetchWithRetry = async function (url, opts, retryOpts) {
 
             return res;
         } catch (e) {
-            // Сетевая ошибка (DNS, CORS, offline и т.п.) — тоже ретраим
             lastErr = e;
 
             if (attempt < maxAttempts - 1) {
@@ -113,11 +98,13 @@ FAR.FsClient.prototype._fetchWithRetry = async function (url, opts, retryOpts) {
     throw lastErr || new Error('Max retries exceeded for ' + method + ' ' + url);
 };
 
+// ВАЖНО: используем _encodePathPart для значений параметров,
+// чтобы скобки и амперсанды в путях передавались серверу корректно.
 FAR.FsClient.prototype._url = function (path, params) {
     params = params || {};
     const q = Object.keys(params).map(function (k) {
         return encodeURIComponent(k) + '=' +
-            encodeURIComponent(params[k] == null ? '' : params[k]);
+            FAR.FsClient._encodePathPart(params[k] == null ? '' : params[k]);
     }).join('&');
     return this.baseUrl + path + (q ? '?' + q : '');
 };
@@ -383,19 +370,12 @@ FAR.FsClient.prototype.remove = async function (doc) {
 };
 
 // ============================================================
-// getAttachment — читает тело файла через ПРЯМОЙ URL.
+// getAttachment — читает тело файла.
 // ============================================================
 FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
     opts = opts || {};
     const path = this._pathFromId(id);
-
-    const encodedPath = String(path)
-        .split('/')
-        .filter(Boolean)
-        .map(encodeURIComponent)
-        .join('/');
-
-    const url = this.baseUrl + '/' + encodedPath;
+    const url = this._url('/api/read', { path: path });
 
     const res = await this._fetchWithRetry(url);
 
@@ -418,13 +398,6 @@ FAR.FsClient.prototype.getAttachment = async function (id, name, opts) {
 };
 
 // ---- putAttachment ----
-//
-// ЕДИНАЯ АТОМАРНАЯ ЗАПИСЬ: один PUT /api/write с содержимым.
-// При превышении квоты (507) файл не создаётся вовсе.
-//
-// Ретраи на 5xx: при параллельных копированиях сервер может
-// ответить 500 из-за гонки — повтор с экспоненциальной паузой
-// проходит со 2-3 попытки.
 FAR.FsClient.prototype.putAttachment = async function (id, name, rev, blob, contentType) {
     const path = this._pathFromId(id);
     let body = blob;
@@ -526,7 +499,7 @@ FAR.FsClient.logout = async function (baseUrl, token) {
 
 FAR.FsClient.prototype.directUrl = function (share, relPath, opts) {
     opts = opts || {};
-    const encoded = (relPath || '').split('/').map(encodeURIComponent).join('/');
+    const encoded = (relPath || '').split('/').map(FAR.FsClient._encodePathPart).join('/');
     let url = this.baseUrl + '/' + encodeURIComponent(share) + '/' + encoded;
     if (this.token && !opts.noToken) {
         url += '?token=' + encodeURIComponent(this.token);

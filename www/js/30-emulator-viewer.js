@@ -1,5 +1,5 @@
 // ============================================================
-// Просмотр игр через EmulatorJS в полноэкранной модалке
+// 30-emulator-viewer.js — Просмотр игр через EmulatorJS
 // ============================================================
 
 FAR._emulatorInstance = null;
@@ -27,8 +27,8 @@ FAR.EMULATOR_EXT_TO_CORE = {
     'col': 'coleco', 'cv': 'coleco',
     // Commodore 64
     'd64': 'vice_x64sc',
-    // Nintendo DS / GBA / GB
-    'nds': 'nds', 'gba': 'gba', 'gb': 'gb',
+    // Nintendo DS / GBA / GB / GBC
+    'nds': 'nds', 'gba': 'gba', 'gb': 'gb', 'gbc': 'gb', 'sgb': 'gb',
     // Из выпадающего меню EmulatorJS (по системам)
     'psx': 'psx', 'bin': 'psx', 'cue': 'psx', 'img': 'psx',
     'iso': 'psx', 'pbp': 'psx', 'chd': 'psx',
@@ -52,7 +52,6 @@ FAR.EMULATOR_EXT_TO_CORE = {
 FAR._getEmulatorCore = function(item) {
     if (!item || item.isFolder) return null;
     const ext = (item.name.split('.').pop() || '').toLowerCase();
-    // Убрана строка: if (ext === 'nes') return null;
     return FAR.EMULATOR_EXT_TO_CORE[ext] || null;
 };
 
@@ -122,7 +121,6 @@ FAR.openEmulatorViewer = async function (item, side) {
     try { FAR.closeViewer(); } catch (e) {}
     try { FAR.closePanoramaViewer(); } catch (e) {}
     try { if (typeof FAR.closeJsdosViewer === 'function') FAR.closeJsdosViewer(); } catch (e) {}
-    // Убрано закрытие NES-модалки, так как она больше не используется
 
     FAR._emulatorCurrentItem = item;
     FAR._emulatorCurrentSide = side;
