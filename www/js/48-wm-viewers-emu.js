@@ -70,6 +70,63 @@ FAR.WM._loadJsdosV3 = function() {
 };
 
 // ============================================================
+// === JSDOS — остановка эмулятора ===
+// ============================================================
+
+FAR.WM._stopJsdos = function(win) {
+    if (!win || !win.props) return;
+
+    // 1. Очищаем таймер автосохранения
+    if (win.props._jsdosAutoSaveTimer) {
+        clearInterval(win.props._jsdosAutoSaveTimer);
+        win.props._jsdosAutoSaveTimer = null;
+    }
+
+    // 2. Отключаем ResizeObserver
+    if (win.props._jsdosResizeObserver) {
+        win.props._jsdosResizeObserver.disconnect();
+        win.props._jsdosResizeObserver = null;
+    }
+
+    const dosbox = win.props._jsdosInstance;
+    if (!dosbox) return;
+
+    console.log('[JSDOS] Stopping previous emulator instance...');
+
+    // 3. Вызываем стандартный метод остановки
+    if (typeof dosbox.stop === 'function') {
+        try { dosbox.stop(); } catch(e) { console.warn('[JSDOS] stop() failed:', e); }
+    }
+
+    // 4. Завершаем работу Emscripten-модуля
+    const mod = dosbox.module;
+    if (mod) {
+        try { if (typeof mod.abort === 'function') mod.abort(); } catch(e) {}
+        try { if (typeof mod.terminate === 'function') mod.terminate(); } catch(e) {}
+        try { if (typeof mod.exit === 'function') mod.exit(0); } catch(e) {}
+    }
+
+    // 5. Принудительно закрываем AudioContext (для остановки звука)
+    try {
+        if (mod && mod.SDL2 && mod.SDL2.audioContext) {
+            mod.SDL2.audioContext.close();
+        }
+        if (mod && mod.audioContext) {
+            mod.audioContext.close();
+        }
+    } catch(e) {}
+
+    // 6. Очищаем DOM
+    const root = win.bodyEl.querySelector('[data-role="root"]');
+    if (root) {
+        root.innerHTML = '';
+    }
+
+    win.props._jsdosInstance = null;
+    win.props._jsdosReady = false;
+};
+
+// ============================================================
 // === JSDOS — сохранение/загрузка состояния ===
 // ============================================================
 
@@ -295,6 +352,9 @@ FAR.WM._jsdosImportState = function (win) {
 // ============================================================
 
 FAR.WM._mountJsdosViewer = async function (win, props) {
+    // ПРИНУДИТЕЛЬНО ОСТАНАВЛИВАЕМ ПРЕДЫДУЩУЮ ИГРУ (если она была открыта)
+    FAR.WM._stopJsdos(win);
+
     const item = props.file;
     const side = props.side || FAR.activePanel;
 
@@ -383,15 +443,15 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
 
         // ResizeObserver для пересчета размеров канваса и координат мыши при изменении окна WM
         if (window.ResizeObserver) {
-            win._jsdosResizeObserver = new ResizeObserver(() => {
+            win.props._jsdosResizeObserver = new ResizeObserver(() => {
                 window.dispatchEvent(new Event('resize'));
             });
-            win._jsdosResizeObserver.observe(wrapper);
+            win.props._jsdosResizeObserver.observe(wrapper);
         }
 
         // Помечаем готовность через 3 секунды
         setTimeout(() => {
-            if (!FAR.WM.getWindow(win.id)) return;
+            if (!FAR.WM.getWindow(win.id) || win.props._jsdosInstance !== dosbox) return;
             win.props._jsdosReady = true;
             loadingEl.style.display = 'none';
 
@@ -407,8 +467,8 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         }, 3000);
 
         // Периодическая синхронизация из IndexedDB в FileBD (каждые 15 секунд)
-        const autoSaveTimer = setInterval(async () => {
-            if (win.props._jsdosReady && win.props._jsdosInstance) {
+        win.props._jsdosAutoSaveTimer = setInterval(async () => {
+            if (win.props._jsdosInstance === dosbox && win.props._jsdosReady) {
                 try {
                     const stateBytes = await FAR.WM._jsdosGetState(win);
                     if (stateBytes) {
@@ -438,21 +498,17 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
                     } catch (err) {
                         console.warn('[JSDOS] Auto-save failed:', err);
                     } finally {
-                        clearInterval(autoSaveTimer);
+                        FAR.WM._stopJsdos(win);
                         FAR.WM.closeWindow(win.id);
                     }
                 }, 100);
             }, true);
         }
 
-        // Очистка таймера и ResizeObserver
+        // Очистка таймера и ResizeObserver при любом способе закрытия
         const prevOnClose = win.onClose;
         win.onClose = function (w) {
-            clearInterval(autoSaveTimer);
-            if (win._jsdosResizeObserver) {
-                win._jsdosResizeObserver.disconnect();
-                win._jsdosResizeObserver = null;
-            }
+            FAR.WM._stopJsdos(win);
             if (typeof prevOnClose === 'function') prevOnClose(w);
         };
 
