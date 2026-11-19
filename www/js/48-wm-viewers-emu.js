@@ -6,7 +6,7 @@ FAR.WM = FAR.WM || {};
 FAR.WM._emu = FAR.WM._emu || {};
 
 // ============================================================
-// === Загрузка библиотеки JSDOS v3 ===
+// === Загрузка библиотеки JSDOS v3 + Патч памяти ===
 // ============================================================
 
 FAR.WM._loadJsdosV3 = function() {
@@ -49,15 +49,28 @@ FAR.WM._loadJsdosV3 = function() {
             // 4. jsdos-patch.js
             await loadScript(base + 'jsdos-patch.js');
 
-            // 5. Переопределяем SaveManager.init, чтобы использовать постоянный ключ сохранения
-            if (window.Dosbox && window.Dosbox.SaveManager) {
-                const sm = window.Dosbox.SaveManager;
-                const origInit = sm.init;
-                sm.init = function(module, saveKey) {
-                    const stableKey = window._currentJsdosSaveKey || saveKey;
-                    console.log('[JSDOS] SaveManager.init -> stableKey:', stableKey);
-                    return origInit.call(this, module, stableKey);
+            // 5. ПАТЧ ПАМЯТИ И КЛЮЧА СОХРАНЕНИЯ
+            if (window.Dosbox) {
+                // Переопределяем _jsdos_init для выделения 1 ГБ памяти
+                const origInit = window.Dosbox.prototype._jsdos_init;
+                window.Dosbox.prototype._jsdos_init = function(module, script, onload) {
+                    if (module) {
+                        module['TOTAL_MEMORY'] = 1024 * 1024 * 1024; // 1 GB
+                        module['ALLOW_MEMORY_GROWTH'] = 1;
+                        console.log('[JSDOS] Memory limit increased to 1 GB');
+                    }
+                    return origInit.call(this, module, script, onload);
                 };
+
+                // Переопределяем SaveManager.init для постоянного ключа сохранения
+                if (window.Dosbox.SaveManager) {
+                    const sm = window.Dosbox.SaveManager;
+                    const origSmInit = sm.init;
+                    sm.init = function(module, saveKey) {
+                        const stableKey = window._currentJsdosSaveKey || saveKey;
+                        return origSmInit.call(this, module, stableKey);
+                    };
+                }
             }
 
             window._jsdosV3Loaded = true;
@@ -76,13 +89,6 @@ FAR.WM._loadJsdosV3 = function() {
 FAR.WM._stopJsdos = function(win) {
     if (!win || !win.props) return;
 
-    // 1. Очищаем таймер автосохранения
-    if (win.props._jsdosAutoSaveTimer) {
-        clearInterval(win.props._jsdosAutoSaveTimer);
-        win.props._jsdosAutoSaveTimer = null;
-    }
-
-    // 2. Отключаем ResizeObserver
     if (win.props._jsdosResizeObserver) {
         win.props._jsdosResizeObserver.disconnect();
         win.props._jsdosResizeObserver = null;
@@ -93,12 +99,10 @@ FAR.WM._stopJsdos = function(win) {
 
     console.log('[JSDOS] Stopping previous emulator instance...');
 
-    // 3. Вызываем стандартный метод остановки
     if (typeof dosbox.stop === 'function') {
         try { dosbox.stop(); } catch(e) { console.warn('[JSDOS] stop() failed:', e); }
     }
 
-    // 4. Завершаем работу Emscripten-модуля
     const mod = dosbox.module;
     if (mod) {
         try { if (typeof mod.abort === 'function') mod.abort(); } catch(e) {}
@@ -106,21 +110,13 @@ FAR.WM._stopJsdos = function(win) {
         try { if (typeof mod.exit === 'function') mod.exit(0); } catch(e) {}
     }
 
-    // 5. Принудительно закрываем AudioContext (для остановки звука)
     try {
-        if (mod && mod.SDL2 && mod.SDL2.audioContext) {
-            mod.SDL2.audioContext.close();
-        }
-        if (mod && mod.audioContext) {
-            mod.audioContext.close();
-        }
+        if (mod && mod.SDL2 && mod.SDL2.audioContext) mod.SDL2.audioContext.close();
+        if (mod && mod.audioContext) mod.audioContext.close();
     } catch(e) {}
 
-    // 6. Очищаем DOM
     const root = win.bodyEl.querySelector('[data-role="root"]');
-    if (root) {
-        root.innerHTML = '';
-    }
+    if (root) root.innerHTML = '';
 
     win.props._jsdosInstance = null;
     win.props._jsdosReady = false;
@@ -168,28 +164,6 @@ FAR.WM._jsdosSaveStateToDB = async function (side, item, stateBytes) {
     } catch (e) {
         console.warn('[JSDOS] save state to DB failed:', e);
         return false;
-    }
-};
-
-FAR.WM._jsdosLoadStateFromDB = async function (side, item) {
-    if (!item) return null;
-    const ctx = FAR.side[side];
-    if (!ctx || !ctx.db) return null;
-
-    const statePath = FAR.WM._jsdosGetStatePath(item);
-    if (!statePath) return null;
-
-    const docId = 'f:' + encodeURIComponent(statePath);
-    try {
-        await ctx.db.get(docId);
-        const att = await ctx.db.getAttachment(docId, 'b', { binary: true });
-        const r = await FAR._attachmentToBytesAsync(att, 'application/octet-stream');
-        return r.bytes;
-    } catch (e) {
-        if (e.status !== 404) {
-            console.warn('[JSDOS] load state from DB failed:', e);
-        }
-        return null;
     }
 };
 
@@ -352,7 +326,7 @@ FAR.WM._jsdosImportState = function (win) {
 // ============================================================
 
 FAR.WM._mountJsdosViewer = async function (win, props) {
-    // ПРИНУДИТЕЛЬНО ОСТАНАВЛИВАЕМ ПРЕДЫДУЩУЮ ИГРУ (если она была открыта)
+    // 1. ПРИНУДИТЕЛЬНО ОСТАНАВЛИВАЕМ ПРЕДЫДУЩУЮ ИГРУ (если она была открыта)
     FAR.WM._stopJsdos(win);
 
     const item = props.file;
@@ -390,7 +364,7 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         return;
     }
 
-    // Устанавливаем постоянный ключ сохранения
+    // Устанавливаем постоянный ключ сохранения (по пути к файлу)
     window._currentJsdosSaveKey = item.path;
 
     let url = null;
@@ -405,27 +379,6 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
         return;
     }
 
-    // Предзагрузка состояния из FileBD в IndexedDB
-    statusEl.textContent = 'Проверка сохранений…';
-    const stateBytes = await FAR.WM._jsdosLoadStateFromDB(side, item);
-    if (stateBytes) {
-        try {
-            const payload = JSON.parse(new TextDecoder().decode(stateBytes));
-            if (payload && Array.isArray(payload.files)) {
-                const SaveManager = window.Dosbox.SaveManager;
-                SaveManager.saveKey = item.path;
-                const records = payload.files.map(x => ({
-                    path: x.path,
-                    data: new Uint8Array(x.data)
-                }));
-                await SaveManager._writeAll(records);
-                console.log('[JSDOS] Preloaded state into IndexedDB');
-            }
-        } catch(e) {
-            console.warn('[JSDOS] Failed to preload state:', e);
-        }
-    }
-
     // Запуск
     statusEl.textContent = 'Запуск DOSBox…';
     try {
@@ -433,7 +386,7 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
             id: root.id,
             autoStart: true,
             file: url,
-            persistSaves: true
+            persistSaves: true // Включает автосохранение в IndexedDB
         });
 
         win.props._jsdosInstance = dosbox;
@@ -466,19 +419,6 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
             window.dispatchEvent(new Event('resize'));
         }, 3000);
 
-        // Периодическая синхронизация из IndexedDB в FileBD (каждые 15 секунд)
-        win.props._jsdosAutoSaveTimer = setInterval(async () => {
-            if (win.props._jsdosInstance === dosbox && win.props._jsdosReady) {
-                try {
-                    const stateBytes = await FAR.WM._jsdosGetState(win);
-                    if (stateBytes) {
-                        await FAR.WM._jsdosSaveStateToDB(side, item, stateBytes);
-                        console.log('[JSDOS] Auto-saved to FileBD (periodic)');
-                    }
-                } catch(e) { /* ignore */ }
-            }
-        }, 15000);
-
         // Синхронизация при закрытии окна
         const closeBtn = win.el.querySelector('.wm-btn-close');
         if (closeBtn) {
@@ -486,22 +426,8 @@ FAR.WM._mountJsdosViewer = async function (win, props) {
                 e.stopImmediatePropagation();
                 e.preventDefault();
 
-                FAR.toast('Сохранение состояния перед закрытием...', 'info');
-
-                setTimeout(async () => {
-                    try {
-                        const stateBytes = await FAR.WM._jsdosGetState(win);
-                        if (stateBytes) {
-                            await FAR.WM._jsdosSaveStateToDB(side, item, stateBytes);
-                            console.log('[JSDOS] Auto-saved to FileBD on close');
-                        }
-                    } catch (err) {
-                        console.warn('[JSDOS] Auto-save failed:', err);
-                    } finally {
-                        FAR.WM._stopJsdos(win);
-                        FAR.WM.closeWindow(win.id);
-                    }
-                }, 100);
+                FAR.WM._stopJsdos(win);
+                FAR.WM.closeWindow(win.id);
             }, true);
         }
 
