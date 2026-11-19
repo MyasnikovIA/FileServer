@@ -1,152 +1,304 @@
 // ============================================================
-// 48-wm-viewers-emu.js — Эмуляторы и консоль
+// 48-wm-viewers-emu.js — WM-режим для JSDOS и EmulatorJS.
 // ============================================================
 
+FAR.WM = FAR.WM || {};
+FAR.WM._emu = FAR.WM._emu || {};
+
+// ============================================================
+// JSDOS
+// ============================================================
 FAR.WM._mountJsdosViewer = async function (win, props) {
+    props = props || {};
     const item = props.file;
     const side = props.side || FAR.activePanel;
 
-    win.el.querySelector('.wm-title-text').textContent = '🕹️ ' + item.name;
-    win.bodyEl.innerHTML =
-        '<div style="height:100%;position:relative;background:#000;">' +
-        '<div data-role="root" style="width:100%;height:100%;min-height:400px;outline:none;" tabindex="0"></div>' +
-        '<div data-role="loading" style="position:absolute;inset:0;background:rgba(0,0,0,0.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#a6adc8;z-index:10;">' +
-        '<div style="width:50px;height:50px;border:4px solid #313244;border-top-color:#89b4fa;border-radius:50%;animation:spin 1s linear infinite;"></div>' +
-        '<div data-role="status" style="font-size:14px;">Загрузка игры…</div></div></div>';
+    win.bodyEl.innerHTML = '';
+    win.bodyEl.style.background = '#000';
+    win.bodyEl.style.display = 'flex';
+    win.bodyEl.style.flexDirection = 'column';
+    win.bodyEl.style.minHeight = '0';
+    win.bodyEl.style.position = 'relative';
 
-    const root = win.bodyEl.querySelector('[data-role="root"]');
-    const loadingEl = win.bodyEl.querySelector('[data-role="loading"]');
-    const statusEl = win.bodyEl.querySelector('[data-role="status"]');
+    const host = document.createElement('div');
+    host.className = 'jsdos-root';
+    host.style.cssText =
+        'flex:1; min-height:0; width:100%; height:100%;' +
+        'background:#000; overflow:hidden; position:relative;';
+    win.bodyEl.appendChild(host);
 
-    if (!window.Dos) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Библиотека JS-DOS не загружена.</div>'; return; }
+    const loading = document.createElement('div');
+    loading.className = 'jsdos-loading';
+    loading.innerHTML =
+        '<div class="spinner"></div>' +
+        '<div class="jsdos-loading-text">Загрузка игры…</div>';
+    host.appendChild(loading);
 
-    let url = null;
+    if (!item || !FAR.side[side] || !FAR.side[side].db) {
+        loading.innerHTML = '<div class="jsdos-loading-text">Файл не выбран или нет БД</div>';
+        return;
+    }
+
+    if (typeof FAR._ensureItemName === 'function') FAR._ensureItemName(item);
+    if (!window.Dos) {
+        loading.innerHTML = '<div class="jsdos-loading-text">JS-DOS не загружен</div>';
+        return;
+    }
+
+    let blobUrl = '';
     try {
-        const r = await FAR.readFileBodyFromSide(side, item);
-        const blob = new Blob([r.data], { type: r.contentType || 'application/octet-stream' });
-        url = URL.createObjectURL(blob);
-        FAR.WM._trackBlobUrl(win, url);
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка чтения: ' + FAR.escapeHtml(e.message) + '</div>'; return; }
+        const { data, contentType } = await FAR.readFileBodyFromSide(side, item);
+        const blob = new Blob([data], { type: contentType || 'application/octet-stream' });
+        blobUrl = URL.createObjectURL(blob);
+        if (!win.props._jsdosBlobUrls) win.props._jsdosBlobUrls = [];
+        win.props._jsdosBlobUrls.push(blobUrl);
+    } catch (e) {
+        loading.innerHTML = '<div class="jsdos-loading-text">Ошибка чтения файла</div>';
+        return;
+    }
 
     await new Promise(r => setTimeout(r, 50));
 
     try {
         const pathPrefix = new URL('lib/js-dos/', window.location.href).href;
-        if (typeof window.emulators !== 'undefined') window.emulators.pathPrefix = pathPrefix;
-
-        const instance = window.Dos(root, { wdosboxUrl: pathPrefix + 'wdosbox.js', pathPrefix: pathPrefix });
-        win.props._jsdosInstance = instance;
-        statusEl.textContent = 'Запуск…';
-        try { instance.events().onStdout(line => console.log('[WM jsdos]', line)); } catch (e) {}
-
-        await instance.run(url);
-        loadingEl.style.display = 'none';
-        FAR.setStatus('🕹️ JSDOS: ' + item.name);
-        try { root.setAttribute('tabindex', '0'); root.focus(); const canvas = root.querySelector('canvas'); if (canvas) { canvas.setAttribute('tabindex', '0'); canvas.focus(); } } catch (e) {}
-
-        if (typeof FAR.VirtualGamepad !== 'undefined') {
-            FAR.VirtualGamepad.mount(root, 'jsdos');
+        if (typeof window.emulators !== 'undefined') {
+            window.emulators.pathPrefix = pathPrefix;
         }
 
-        FAR.WM._installViewerNavButtons(win, item, side);
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }
+        const instance = window.Dos(host, {
+            wdosboxUrl: pathPrefix + 'wdosbox.js',
+            pathPrefix: pathPrefix
+        });
+        win.props._jsdosInstance = instance;
+
+        try {
+            instance.events().onStdout(line => console.log('[jsdos wm]', line));
+        } catch (e) {}
+
+        instance.run(blobUrl).catch(e => console.error('[WM JSDOS] run error:', e));
+
+        const checkCanvas = setInterval(() => {
+            const canvas = host.querySelector('canvas');
+            if (canvas && canvas.width > 0) {
+                clearInterval(checkCanvas);
+                loading.classList.add('hidden');
+                window.dispatchEvent(new Event('resize'));
+            }
+        }, 100);
+
+        setTimeout(() => {
+            clearInterval(checkCanvas);
+            loading.classList.add('hidden');
+            window.dispatchEvent(new Event('resize'));
+        }, 2000);
+
+        if (typeof ResizeObserver !== 'undefined') {
+            if (win.props._resizeObserver) {
+                try { win.props._resizeObserver.disconnect(); } catch (e) {}
+            }
+            win.props._resizeObserver = new ResizeObserver(function () {
+                const canvas = host.querySelector('canvas');
+                if (canvas) {
+                    canvas.style.removeProperty('top');
+                    canvas.style.removeProperty('left');
+                    canvas.style.removeProperty('width');
+                    canvas.style.removeProperty('height');
+                    canvas.style.removeProperty('position');
+                }
+                window.dispatchEvent(new Event('resize'));
+            });
+            win.props._resizeObserver.observe(win.bodyEl);
+        }
+
+        try {
+            host.setAttribute('tabindex', '0');
+            host.focus();
+            const canvas = host.querySelector('canvas');
+            if (canvas) { canvas.setAttribute('tabindex', '0'); canvas.focus(); }
+        } catch (e) {}
+
+        FAR.setStatus('🕹️ JSDOS: ' + (item.name || item.path));
+    } catch (e) {
+        console.error('[WM JSDOS] failed:', e);
+        loading.innerHTML = '<div class="jsdos-loading-text">Ошибка запуска</div>';
+    }
 };
 
-// _mountNesViewer УДАЛЕНА
-
+// ============================================================
+// EmulatorJS
+// ============================================================
 FAR.WM._mountEmulatorViewer = async function (win, props) {
-    const others = FAR.WM.state.windows.filter(w => w.appId === 'emulator' && w.id !== win.id);
-    for (const other of others) { try { FAR.WM._finalizeViewer(other); FAR.WM.closeWindow(other.id, true); } catch (e) {} }
-
+    props = props || {};
     const item = props.file;
     const side = props.side || FAR.activePanel;
-    const core = (typeof FAR._getEmulatorCore === 'function') ? FAR._getEmulatorCore(item) : null;
 
-    if (!core) {
-        win.el.querySelector('.wm-title-text').textContent = '🕹️ ' + item.name;
-        FAR.WM._mountNotice(win, '🕹️', 'Формат файла не поддерживается EmulatorJS.');
+    win.bodyEl.innerHTML = '';
+    win.bodyEl.style.background = '#000';
+    win.bodyEl.style.display = 'flex';
+    win.bodyEl.style.flexDirection = 'column';
+    win.bodyEl.style.minHeight = '0';
+    win.bodyEl.style.position = 'relative';
+
+    const host = document.createElement('div');
+    host.className = 'emulator-root';
+    host.style.cssText =
+        'flex:1; min-height:0; width:100%; height:100%;' +
+        'background:#000; overflow:hidden; position:relative;' +
+        'display:flex; align-items:center; justify-content:center;';
+    win.bodyEl.appendChild(host);
+
+    const loading = document.createElement('div');
+    loading.className = 'emulator-loading';
+    loading.innerHTML =
+        '<div class="spinner"></div>' +
+        '<div class="emulator-loading-text">Загрузка эмулятора…</div>';
+    host.appendChild(loading);
+
+    if (!item || !FAR.side[side] || !FAR.side[side].db) {
+        loading.innerHTML = '<div class="emulator-loading-text">Ошибка: нет файла или БД</div>';
         return;
     }
 
-    win.el.querySelector('.wm-title-text').textContent = '🕹️ ' + item.name + ' (' + core + ')';
-    win.bodyEl.innerHTML =
-        '<div style="height:100%;position:relative;background:#000;">' +
-        '<div data-role="root" style="width:100%;height:100%;min-height:400px;"></div>' +
-        '<div data-role="loading" style="position:absolute;inset:0;background:rgba(0,0,0,0.9);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#a6adc8;z-index:10;">' +
-        '<div style="width:50px;height:50px;border:4px solid #313244;border-top-color:#89b4fa;border-radius:50%;animation:spin 1s linear infinite;"></div>' +
-        '<div data-role="status" style="font-size:14px;">Загрузка эмулятора…</div></div></div>';
-
-    const root = win.bodyEl.querySelector('[data-role="root"]');
-    const loadingEl = win.bodyEl.querySelector('[data-role="loading"]');
-    const statusEl = win.bodyEl.querySelector('[data-role="status"]');
-
-    win.props._emuSeq = (win.props._emuSeq || 0) + 1;
-    const containerId = 'wm-emu-' + win.id + '-' + win.props._emuSeq;
-    root.id = containerId;
-
-    let blobUrl = null;
-    try {
-        statusEl.textContent = 'Загрузка ROM…';
-        const r = await FAR.readFileBodyFromSide(side, item);
-        const blob = new Blob([r.data], { type: r.contentType || 'application/octet-stream' });
-        blobUrl = URL.createObjectURL(blob);
-        FAR.WM._trackBlobUrl(win, blobUrl);
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка ROM: ' + FAR.escapeHtml(e.message) + '</div>'; return; }
-
-    if (typeof window.EmulatorJS !== 'function') {
-        statusEl.textContent = 'Загрузка библиотеки…';
-        const tempContainer = document.createElement('div');
-        tempContainer.id = 'ejs-temp-' + win.id;
-        tempContainer.style.cssText = 'position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;pointer-events:none;';
-        document.body.appendChild(tempContainer);
-
-        window.EJS_player = '#' + tempContainer.id;
-        window.EJS_core = core; window.EJS_gameUrl = blobUrl; window.EJS_gameName = item.name;
-        window.EJS_pathtodata = 'lib/js-emulator/'; window.EJS_color = '#89b4fa'; window.EJS_startOnLoaded = false;
-
-        try {
-            if (typeof FAR._loadEmulatorLoader !== 'function') throw new Error('Модуль 30-emulator-viewer.js не загружен');
-            await FAR._loadEmulatorLoader();
-        } catch (e) {
-            try { tempContainer.remove(); } catch (e2) {}
-            loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка библиотеки: ' + FAR.escapeHtml(e.message) + '</div>';
-            return;
-        }
-        setTimeout(() => { try { tempContainer.remove(); } catch (e2) {} }, 200);
+    if (typeof FAR._ensureItemName === 'function') FAR._ensureItemName(item);
+    if (typeof FAR.isEmulatorFile === 'function' && !FAR.isEmulatorFile(item)) {
+        loading.innerHTML = '<div class="emulator-loading-text">Не ROM-файл</div>';
+        return;
     }
 
-    if (typeof window.EmulatorJS !== 'function') { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">window.EmulatorJS не определён</div>'; return; }
+    let data = null;
+    let contentType = 'application/octet-stream';
+    try {
+        const r = await FAR.readFileBodyFromSide(side, item);
+        data = r.data;
+        contentType = r.contentType || 'application/octet-stream';
+    } catch (e) {
+        loading.innerHTML = '<div class="emulator-loading-text">Ошибка чтения</div>';
+        return;
+    }
 
-    window.EJS_player = '#' + containerId;
-    window.EJS_core = core; window.EJS_gameUrl = blobUrl; window.EJS_gameName = item.name;
-    window.EJS_pathtodata = 'lib/js-emulator/'; window.EJS_color = '#89b4fa'; window.EJS_startOnLoaded = true;
+    const blob = new Blob([data], { type: contentType });
+    const blobUrl = URL.createObjectURL(blob);
+    if (!win.props._emuBlobUrls) win.props._emuBlobUrls = [];
+    win.props._emuBlobUrls.push(blobUrl);
 
-    statusEl.textContent = 'Запуск ядра ' + core + '…';
+    const ext = (item.name.split('.').pop() || '').toLowerCase();
+    const core = FAR._emuGetCore(ext);
+
+    const ejsHost = document.createElement('div');
+    ejsHost.id = 'ejs_' + win.id + '_' + Math.random().toString(36).substr(2, 6);
+    ejsHost.style.cssText = 'width:100%; height:100%; display:flex; align-items:center; justify-content:center;';
+    host.appendChild(ejsHost);
+
+    await new Promise(r => setTimeout(r, 30));
 
     try {
-        const emu = new window.EmulatorJS('#' + containerId, {
-            gameUrl: blobUrl, gameName: item.name, dataPath: 'lib/js-emulator/',
-            system: core, color: '#89b4fa', startOnLoad: true
-        });
-        win.props._emulatorInstance = emu;
+        window.EJS_player = '#' + ejsHost.id;
+        window.EJS_core = core;
+        window.EJS_gameName = item.name.replace(/\.[^.]+$/, '');
+        window.EJS_biosUrl = '';
+        window.EJS_gameUrl = blobUrl;
+        window.EJS_pathtodata = new URL('lib/emulatorjs/data/', window.location.href).href;
+        window.EJS_startOnLoaded = true;
+        window.EJS_color = '#89b4fa';
 
-        setTimeout(() => {
-            if (!FAR.WM.getWindow(win.id)) return;
-            if (loadingEl) loadingEl.style.display = 'none';
-            if (typeof FAR.VirtualGamepad !== 'undefined') {
-                FAR.VirtualGamepad.mount(root, core);
+        if (!window.EJS_emulator) {
+            await FAR.loadScriptOnce(window.EJS_pathtodata + 'loader.js');
+        } else if (typeof window.EJS_emulator !== 'undefined' && typeof window.EJS_emulator.play === 'function') {
+            try { window.EJS_emulator.play(); } catch (e) {}
+        }
+
+        const waitStart = Date.now();
+        while (!host.querySelector('canvas') && Date.now() - waitStart < 5000) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+
+        const canvas = host.querySelector('canvas');
+        if (canvas) {
+            canvas.style.maxWidth  = '100%';
+            canvas.style.maxHeight = '100%';
+            canvas.style.width     = '100%';
+            canvas.style.height    = '100%';
+            canvas.style.objectFit = 'contain';
+            canvas.style.imageRendering = 'pixelated';
+        }
+
+        loading.classList.add('hidden');
+
+        if (typeof ResizeObserver !== 'undefined') {
+            if (win.props._resizeObserver) {
+                try { win.props._resizeObserver.disconnect(); } catch (e) {}
             }
-        }, 3000);
-        FAR.setStatus('🕹️ EmulatorJS: ' + item.name + ' (' + core + ')');
-        FAR.WM._installViewerNavButtons(win, item, side);
-    } catch (e) { loadingEl.innerHTML = '<div style="color:#f38ba8;padding:20px;text-align:center;">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>'; }
+            win.props._resizeObserver = new ResizeObserver(function () {
+                window.dispatchEvent(new Event('resize'));
+            });
+            win.props._resizeObserver.observe(win.bodyEl);
+        }
+
+        FAR.setStatus('🕹️ EmulatorJS: ' + item.name);
+    } catch (e) {
+        console.error('[WM Emu] failed:', e);
+        loading.innerHTML = '<div class="emulator-loading-text">Ошибка запуска</div>';
+    }
 };
 
-FAR.WM._mountConsoleViewer = async function (win, props) {
-    win.el.querySelector('.wm-title-text').textContent = '🖥 Console';
-    if (win.props._consoleApi) { try { win.props._consoleApi.destroy(); } catch (e) {} win.props._consoleApi = null; }
-    win.bodyEl.innerHTML = '';
-    win.bodyEl.style.display = 'flex'; win.bodyEl.style.flexDirection = 'column'; win.bodyEl.style.minHeight = '0';
-    win.props._consoleApi = FAR._createConsole(win.bodyEl, {});
-    setTimeout(() => { const ta = win.bodyEl.querySelector('.xterm-helper-textarea'); if (ta) try { ta.focus(); } catch (e) {} }, 100);
+FAR._emuGetCore = function (ext) {
+    ext = String(ext || '').toLowerCase();
+    switch (ext) {
+        case 'nes': case 'fds': return 'nes';
+        case 'smc': case 'sfc': case 'fig': case 'swc': case 'bsx': return 'snes';
+        case 'gba': return 'gba';
+        case 'gb':  case 'gbc': return 'gb';
+        case 'n64': case 'z64': case 'v64': return 'n64';
+        case 'nds': return 'nds';
+        case 'md':  case 'gen': case 'smd': case 'bin': return 'segaMD';
+        case 'sms': case 'gg':  return 'segaMS';
+        case 'pce': return 'pce';
+        case 'ws':  case 'wsc': return 'ws';
+        case 'col': return 'coleco';
+        case 'a26': return 'atari2600';
+        case 'a78': return 'atari7800';
+        case 'j64': case 'jag': return 'jaguar';
+        case 'vb':  case 'vboy': return 'vb';
+        case 'psx': case 'pbp': case 'cue': case 'chd': case 'iso': return 'psx';
+        default: return 'nes';
+    }
+};
+
+FAR.WM._finalizeViewer = function (win) {
+    if (!win || !win.props) return;
+
+    if (win.props._resizeObserver) {
+        try { win.props._resizeObserver.disconnect(); } catch (e) {}
+        win.props._resizeObserver = null;
+    }
+
+    if (win.props._jsdosInstance) {
+        try { win.props._jsdosInstance.stop(); } catch (e) {}
+        win.props._jsdosInstance = null;
+    }
+
+    if (window.EJS_emulator && typeof window.EJS_emulator.pause === 'function') {
+        try { window.EJS_emulator.pause(); } catch (e) {}
+    }
+    try { window.EJS_emulator = null; } catch (e) {}
+    try { window.EJS_gameUrl = ''; } catch (e) {}
+
+    if (Array.isArray(win.props._jsdosBlobUrls)) {
+        win.props._jsdosBlobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+        win.props._jsdosBlobUrls = [];
+    }
+
+    if (Array.isArray(win.props._emuBlobUrls)) {
+        win.props._emuBlobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+        win.props._emuBlobUrls = [];
+    }
+
+    if (win.bodyEl) {
+        try { win.bodyEl.innerHTML = ''; } catch (e) {}
+    }
+
+    try {
+        if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+        document.body.focus();
+    } catch (e) {}
 };

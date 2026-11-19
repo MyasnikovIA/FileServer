@@ -6,6 +6,8 @@
     max-height: 100vh;
     border-radius: 0;
     border: none;
+    display: flex;
+    flex-direction: column;
 }
 
 .jsdos-modal-body {
@@ -13,49 +15,68 @@
     padding: 0;
     background: #000;
     overflow: hidden;
-    min-height: 400px;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .jsdos-root {
+    flex: 1;
     width: 100%;
     height: 100%;
-    min-height: 400px;
-    position: relative; /* Необходимо для абсолютного центрирования */
+    position: relative;
     background: #000;
     overflow: hidden;
+    display: flex;
 }
 
-/*
- * ЖЕСТКОЕ ЦЕНТРИРОВАНИЕ JSDOS
- * Библиотека js-dos создает внутренние обертки с собственными
- * стилями (иногда вызывающими смещение вправо).
- * Абсолютное позиционирование со сдвигом -50% гарантирует,
- * что весь блок (холст + панель управления) будет ровно по центру.
- */
-.jsdos-root > div {
+/* 1. Убираем застрявший оверлей загрузки от js-dos */
+.jsdos-root div.z-50,
+.jsdos-root div[class*="bg-gray-800"] {
+    display: none !important;
+}
+
+/* 2. Заставляем внутренний контейнер js-dos занять всю площадь */
+.jsdos-root > .flex-col.flex-grow {
+    flex: 1 1 0% !important;
+    width: 100% !important;
+    height: 100% !important;
+    position: relative !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+}
+
+.jsdos-root .emulator-root {
+    position: relative !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #000 !important;
+}
+
+/* 3. САМОЕ ВАЖНОЕ: Убиваем inline-стили canvas (top, left, width, height) */
+.jsdos-root canvas {
     position: absolute !important;
     top: 50% !important;
     left: 50% !important;
     transform: translate(-50%, -50%) !important;
-    display: flex !important;
-    flex-direction: row !important;
-    max-width: 100vw !important;
-    max-height: 100vh !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-/* Сам холст игры */
-.jsdos-root canvas {
+    width: 100% !important;
+    height: 100% !important;
     max-width: 100% !important;
     max-height: 100% !important;
     object-fit: contain !important;
+    margin: 0 !important;
+    padding: 0 !important;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     display: block !important;
 }
 
-/* Оверлей загрузки */
+/* Наш оверлей загрузки (скрывается по hidden) */
 .jsdos-loading {
     position: absolute;
     inset: 0;
@@ -69,7 +90,7 @@
 }
 
 .jsdos-loading.hidden {
-    display: none;
+    display: none !important;
 }
 
 .jsdos-loading .spinner {
@@ -105,4 +126,8 @@
 
 #jsdosViewerModal .modal-footer button:hover {
     background: #74c7ec;
+}
+
+.wm-window .jsdos-root {
+    min-height: 200px;
 }
