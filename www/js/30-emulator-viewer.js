@@ -69,7 +69,7 @@ FAR._loadEmulatorLoader = function() {
 
     FAR._ejsLoaderPromise = new Promise(function(resolve, reject) {
         const script = document.createElement('script');
-        script.src = 'lib/js-emulator/loader.js';
+        script.src = 'lib/js-emulator/loader.js'; // ПРАВИЛЬНЫЙ ПУТЬ
         script.async = true;
 
         let elapsed = 0;
@@ -116,6 +116,11 @@ FAR.openEmulatorViewer = async function (item, side) {
     if (!core) {
         FAR.toast('Формат не поддерживается эмулятором', 'warning');
         return;
+    }
+
+    // Если открыто окно WM — запускаем там
+    if (typeof FAR.WM !== 'undefined' && FAR.WM.state && FAR.WM.state.active) {
+        return FAR.WM.openApp('emulator', { props: { file: item, side: side } });
     }
 
     try { FAR.closeViewer(); } catch (e) {}
@@ -174,7 +179,7 @@ FAR.openEmulatorViewer = async function (item, side) {
     window.EJS_core          = core;
     window.EJS_gameUrl       = blobUrl;
     window.EJS_gameName      = item.name;
-    window.EJS_pathtodata    = 'lib/js-emulator/';
+    window.EJS_pathtodata    = 'lib/js-emulator/'; // ПРАВИЛЬНЫЙ ПУТЬ
     window.EJS_color         = '#89b4fa';
     window.EJS_startOnLoaded = true;
 

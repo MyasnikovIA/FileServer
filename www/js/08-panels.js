@@ -1,27 +1,9 @@
 // ============================================================
 // Рендер панелей, выделение, навигация курсором.
-// В мульти-БД режиме каждая панель читает свой контекст
-// из FAR.side[side]. Старые имена FAR.leftPath / FAR.leftFiles
-// работают как алиасы к этим контекстам.
-//
-// ЛЕНИВАЯ ЗАГРУЗКА + ВИРТУАЛИЗАЦИЯ:
-//   • renderPanel теперь асинхронно подгружает директорию,
-//     если она ещё не загружена (FAR.ensureDirLoaded).
-//   • DOM-рендер виртуализирован: в контейнер .file-list
-//     добавляется spacer высотой total*ROW_H, а реально
-//     создаются только строки видимого окна.
 // ============================================================
 
-// Высота одной строки списка (должна совпадать с CSS .file-item)
 FAR.ROW_H = 22;
-
-// Сколько строк рисуем за пределами видимой области (буфер)
 FAR.ROW_OVERSCAN = 8;
-
-// ============================================================
-// Публичный асинхронный renderPanel — сначала грузит директорию,
-// потом рисует.
-// ============================================================
 
 FAR.renderPanel = function (side, opts) {
     opts = opts || {};
@@ -33,7 +15,6 @@ FAR.renderPanel = function (side, opts) {
     ctx.path = safePath;
     if (pathEl) pathEl.textContent = safePath;
 
-    // Если директория ещё не загружена — грузим и потом рисуем.
     if (!opts.skipLoad && ctx._loadedDir !== FAR.normPath(safePath)) {
         const self = FAR;
         return FAR.ensureDirLoaded(side, safePath, { silent: true }).then(function () {
@@ -43,11 +24,6 @@ FAR.renderPanel = function (side, opts) {
     FAR._renderPanelDOM(side);
     return Promise.resolve();
 };
-
-// ============================================================
-// Синхронный рендер DOM — вызывается, когда директория уже
-// загружена в ctx.fileIndex. Использует виртуализацию.
-// ============================================================
 
 FAR._renderPanelDOM = function (side) {
     const ctx = FAR.side[side];
@@ -61,14 +37,11 @@ FAR._renderPanelDOM = function (side) {
     ctx.path = safePath;
     if (pathEl) pathEl.textContent = safePath;
 
-    // Подсказка с текущей БД
     if (pathEl) {
         const dbLabel = ctx.conn ? FAR.connLabel(ctx.conn) : '— нет подключения —';
         pathEl.title = 'Источник: ' + dbLabel + '\nКлик — сменить сервер для этой панели';
     }
 
-    // items для этой панели берём прямо из ctx.fileIndex
-    // (ленивая загрузка уже наполнила его детьми текущей папки).
     const items = ctx.fileIndex.filter(function (it) {
         const parent = (function () {
             const p = FAR.normPath(it.path);
@@ -84,7 +57,6 @@ FAR._renderPanelDOM = function (side) {
     const minCursor = hasParent ? -1 : 0;
     const maxCursor = items.length - 1;
 
-    // --- Корректировка курсора ---
     let cursor = ctx.cursor;
     if (items.length === 0) {
         cursor = -1;
@@ -100,11 +72,9 @@ FAR._renderPanelDOM = function (side) {
         if (idx < 0 || idx >= items.length) selSet.delete(idx);
     }
 
-    // === Стилизация активной панели ===
     const panelEl = document.getElementById(side === 'left' ? 'panelLeft' : 'panelRight');
     if (panelEl) panelEl.classList.toggle('active', side === FAR.activePanel);
 
-    // === Виртуализированный рендер ===
     FAR._virtualRender(side, listEl, hasParent, items, cursor, selSet);
 
     if (statusEl) {
@@ -115,17 +85,12 @@ FAR._renderPanelDOM = function (side) {
     FAR.updateTotalSize();
 };
 
-// ============================================================
-// Виртуализация списка.
-// ============================================================
-
 FAR._virtualRender = function (side, listEl, hasParent, items, cursor, selSet) {
     if (!listEl) return;
 
     const totalRows = items.length + (hasParent ? 1 : 0);
     const totalH = totalRows * FAR.ROW_H;
 
-    // Гарантируем наличие spacer и viewport
     let spacer = listEl.querySelector('.file-list-spacer');
     if (!spacer) {
         listEl.innerHTML = '';
@@ -136,15 +101,12 @@ FAR._virtualRender = function (side, listEl, hasParent, items, cursor, selSet) {
     }
     spacer.style.height = totalH + 'px';
 
-    // Скролл-позиция → какое окно строк рисовать
     const scrollTop = listEl.scrollTop;
     const viewportH = listEl.clientHeight || 400;
     const firstVisible = Math.max(0, Math.floor(scrollTop / FAR.ROW_H) - FAR.ROW_OVERSCAN);
     const lastVisible  = Math.min(totalRows - 1,
         Math.ceil((scrollTop + viewportH) / FAR.ROW_H) + FAR.ROW_OVERSCAN);
 
-    // Пересобираем DOM только для видимого окна
-    // (быстро: innerHTML блока размером ~30–60 строк).
     let html = '';
     for (let vi = firstVisible; vi <= lastVisible; vi++) {
         const top = vi * FAR.ROW_H;
@@ -189,7 +151,6 @@ FAR._virtualRender = function (side, listEl, hasParent, items, cursor, selSet) {
 
     spacer.innerHTML = html;
 
-    // Один раз вешаем scroll-обработчик
     if (!listEl._farVirtualBound) {
         listEl._farVirtualBound = true;
         listEl.addEventListener('scroll', function () {
@@ -198,15 +159,13 @@ FAR._virtualRender = function (side, listEl, hasParent, items, cursor, selSet) {
     }
 };
 
-// ============================================================
-// setActivePanel / goToParent / navigatePanel
-// ============================================================
-
 FAR.setActivePanel = function (side) {
     if (FAR.activePanel === side) return;
     FAR.activePanel = side;
-    document.getElementById('panelLeft').classList.toggle('active', side === 'left');
-    document.getElementById('panelRight').classList.toggle('active', side === 'right');
+    const pl = document.getElementById('panelLeft');
+    const pr = document.getElementById('panelRight');
+    if (pl) pl.classList.toggle('active', side === 'left');
+    if (pr) pr.classList.toggle('active', side === 'right');
     FAR.renderPanel('left');
     FAR.renderPanel('right');
     FAR.updateSelectionInfo();
@@ -252,10 +211,6 @@ FAR.navigatePanel = function (side, action) {
     FAR.renderPanel(side);
     FAR.saveUiState();
 };
-
-// ============================================================
-// Обработчики кликов
-// ============================================================
 
 FAR.handleItemClick = function (event, side, index) {
     event.stopPropagation();
@@ -354,16 +309,12 @@ FAR.updateButtons = function () {
     const hasDb = !!FAR.db;
     const ctx = FAR.side[FAR.activePanel];
     const selCount = ctx ? ctx.selectedIdx.size : 0;
-    document.getElementById('btnCopy').disabled     = !hasDb || selCount === 0;
-    document.getElementById('btnMove').disabled     = !hasDb || selCount === 0;
-    document.getElementById('btnDelete').disabled   = !hasDb || selCount === 0;
-    document.getElementById('btnDownload').disabled = !hasDb || selCount === 0;
-    document.getElementById('btnZip').disabled      = !hasDb || selCount === 0;
+    const ids = ['btnCopy', 'btnMove', 'btnDelete', 'btnDownload', 'btnZip'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !hasDb || selCount === 0;
+    });
 };
-
-// ============================================================
-// Навигация курсором
-// ============================================================
 
 FAR.getPageSize = function (side) {
     const listEl = document.getElementById(side === 'left' ? 'listLeft' : 'listRight');
@@ -473,3 +424,18 @@ FAR.moveCursor = function (side, delta, options) {
     FAR.scrollCursorIntoView(side);
     FAR.saveUiState();
 };
+
+// ============================================================
+// МОСТЫ СОВМЕСТИМОСТИ (для старого кода)
+// ============================================================
+// Нужны, чтобы старые модули не падали, когда пытаются
+// перерисовать панели в фоновом режиме.
+
+if (!FAR.reloadPanel) {
+    FAR.reloadPanel = function (side) {
+        const ctx = FAR.side[side];
+        if (!ctx) return Promise.resolve();
+        ctx._loadedDir = null;
+        return FAR.renderPanel(side);
+    };
+}

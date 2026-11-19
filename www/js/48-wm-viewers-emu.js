@@ -141,6 +141,7 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
 
     const host = document.createElement('div');
     host.className = 'emulator-root';
+    host.id = 'ejs_' + win.id + '_' + Math.random().toString(36).substr(2, 6);
     host.style.cssText =
         'flex:1; min-height:0; width:100%; height:100%;' +
         'background:#000; overflow:hidden; position:relative;' +
@@ -160,8 +161,11 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
     }
 
     if (typeof FAR._ensureItemName === 'function') FAR._ensureItemName(item);
-    if (typeof FAR.isEmulatorFile === 'function' && !FAR.isEmulatorFile(item)) {
-        loading.innerHTML = '<div class="emulator-loading-text">Не ROM-файл</div>';
+
+    // Используем функцию определения ядра из 30-emulator-viewer.js
+    const core = typeof FAR._getEmulatorCore === 'function' ? FAR._getEmulatorCore(item) : null;
+    if (!core) {
+        loading.innerHTML = '<div class="emulator-loading-text">Формат не поддерживается</div>';
         return;
     }
 
@@ -181,32 +185,39 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
     if (!win.props._emuBlobUrls) win.props._emuBlobUrls = [];
     win.props._emuBlobUrls.push(blobUrl);
 
-    const ext = (item.name.split('.').pop() || '').toLowerCase();
-    const core = FAR._emuGetCore(ext);
-
-    const ejsHost = document.createElement('div');
-    ejsHost.id = 'ejs_' + win.id + '_' + Math.random().toString(36).substr(2, 6);
-    ejsHost.style.cssText = 'width:100%; height:100%; display:flex; align-items:center; justify-content:center;';
-    host.appendChild(ejsHost);
+    try {
+        if (typeof FAR._installEmulatorStateHooks === 'function') {
+            FAR._installEmulatorStateHooks();
+        }
+    } catch (e) {
+        console.warn('[EmuState] Hooks failed:', e);
+    }
 
     await new Promise(r => setTimeout(r, 30));
 
     try {
-        window.EJS_player = '#' + ejsHost.id;
+        // Настройки для EmulatorJS
+        window.EJS_player = '#' + host.id;
         window.EJS_core = core;
-        window.EJS_gameName = item.name.replace(/\.[^.]+$/, '');
-        window.EJS_biosUrl = '';
         window.EJS_gameUrl = blobUrl;
-        window.EJS_pathtodata = new URL('lib/emulatorjs/data/', window.location.href).href;
-        window.EJS_startOnLoaded = true;
+        window.EJS_gameName = item.name;
+        window.EJS_pathtodata = 'lib/js-emulator/'; // Используем локальную папку проекта
         window.EJS_color = '#89b4fa';
+        window.EJS_startOnLoaded = true;
 
-        if (!window.EJS_emulator) {
-            await FAR.loadScriptOnce(window.EJS_pathtodata + 'loader.js');
-        } else if (typeof window.EJS_emulator !== 'undefined' && typeof window.EJS_emulator.play === 'function') {
-            try { window.EJS_emulator.play(); } catch (e) {}
+        // Загружаем библиотеку
+        if (!FAR._ejsLibraryLoaded) {
+            await FAR._loadEmulatorLoader();
         }
 
+        // Создаем инстанс через функцию из 30-emulator-viewer.js
+        await new Promise((resolve, reject) => {
+            FAR._createEmulatorInstance(host, resolve, reject);
+        });
+
+        win.props._emulatorInstance = window.EJS_emulator;
+
+        // Ждем создания canvas
         const waitStart = Date.now();
         while (!host.querySelector('canvas') && Date.now() - waitStart < 5000) {
             await new Promise(r => setTimeout(r, 100));
@@ -234,33 +245,15 @@ FAR.WM._mountEmulatorViewer = async function (win, props) {
             win.props._resizeObserver.observe(win.bodyEl);
         }
 
-        FAR.setStatus('🕹️ EmulatorJS: ' + item.name);
+        FAR.setStatus('🕹️ EmulatorJS: ' + item.name + ' (' + core + ')');
+
+        if (typeof FAR.VirtualGamepad !== 'undefined') {
+            FAR.VirtualGamepad.mount(host, core);
+        }
+
     } catch (e) {
         console.error('[WM Emu] failed:', e);
-        loading.innerHTML = '<div class="emulator-loading-text">Ошибка запуска</div>';
-    }
-};
-
-FAR._emuGetCore = function (ext) {
-    ext = String(ext || '').toLowerCase();
-    switch (ext) {
-        case 'nes': case 'fds': return 'nes';
-        case 'smc': case 'sfc': case 'fig': case 'swc': case 'bsx': return 'snes';
-        case 'gba': return 'gba';
-        case 'gb':  case 'gbc': return 'gb';
-        case 'n64': case 'z64': case 'v64': return 'n64';
-        case 'nds': return 'nds';
-        case 'md':  case 'gen': case 'smd': case 'bin': return 'segaMD';
-        case 'sms': case 'gg':  return 'segaMS';
-        case 'pce': return 'pce';
-        case 'ws':  case 'wsc': return 'ws';
-        case 'col': return 'coleco';
-        case 'a26': return 'atari2600';
-        case 'a78': return 'atari7800';
-        case 'j64': case 'jag': return 'jaguar';
-        case 'vb':  case 'vboy': return 'vb';
-        case 'psx': case 'pbp': case 'cue': case 'chd': case 'iso': return 'psx';
-        default: return 'nes';
+        loading.innerHTML = '<div class="emulator-loading-text">Ошибка запуска: ' + FAR.escapeHtml(e.message) + '</div>';
     }
 };
 
