@@ -78,6 +78,74 @@ FAR.injectModals = async function () {
 };
 
 // ============================================================
+// [JSDOS-FIX] Последняя линия обороны при уходе со страницы:
+// гасим все активные JSDOS-инстансы (и модалку, и WM-окна),
+// чтобы звук не продолжался после закрытия/перезагрузки вкладки.
+// ============================================================
+
+FAR._emergencyStopAllJsdos = function () {
+    // 1. Модалка (28-jsdos-viewer.js)
+    try {
+        if (FAR._jsdosModalState && FAR._jsdosModalState.ci) {
+            const ci = FAR._jsdosModalState.ci;
+            if (typeof FAR._hardSilenceJsdos === 'function') {
+                try {
+                    FAR._hardSilenceJsdos(
+                        ci,
+                        document.getElementById('jsdosRoot')
+                    );
+                } catch (e) {}
+            }
+            try { if (typeof ci.stop === 'function') ci.stop(); } catch (e) {}
+            try {
+                if (ci.dosWorker) ci.dosWorker.terminate();
+            } catch (e) {}
+            try {
+                if (ci.worker) ci.worker.terminate();
+            } catch (e) {}
+        }
+    } catch (e) { /* ignore */ }
+
+    // 2. Все WM-окна (48-wm-viewers-emu.js)
+    try {
+        if (typeof FAR.WM !== 'undefined'
+            && FAR.WM.state
+            && Array.isArray(FAR.WM.state.windows)) {
+            for (const w of FAR.WM.state.windows) {
+                if (w && w.props && w.props._jsdosInstance) {
+                    try {
+                        if (typeof FAR.WM._stopJsdos === 'function') {
+                            FAR.WM._stopJsdos(w);
+                        } else {
+                            const ci = w.props._jsdosInstance;
+                            if (typeof FAR._hardSilenceJsdos === 'function') {
+                                try { FAR._hardSilenceJsdos(ci, w.bodyEl); } catch (e) {}
+                            }
+                            try { if (typeof ci.stop === 'function') ci.stop(); } catch (e) {}
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        }
+    } catch (e) { /* ignore */ }
+};
+
+// Регистрируем один раз. pagehide вызывается и при закрытии вкладки,
+// и при bfcache-navigation. beforeunload — на всякий случай для
+// старых браузеров.
+(function installJsdosEmergencyStop() {
+    if (window._farJsdosEmergencyInstalled) return;
+    window._farJsdosEmergencyInstalled = true;
+
+    const handler = function () {
+        try { FAR._emergencyStopAllJsdos(); } catch (e) { /* ignore */ }
+    };
+
+    window.addEventListener('pagehide', handler);
+    window.addEventListener('beforeunload', handler);
+})();
+
+// ============================================================
 // Старт
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function () {

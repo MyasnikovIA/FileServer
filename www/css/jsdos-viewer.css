@@ -31,13 +31,12 @@
     display: flex;
 }
 
-/* 1. Убираем застрявший оверлей загрузки от js-dos */
+/* Убираем застрявший оверлей загрузки от js-dos */
 .jsdos-root div.z-50,
 .jsdos-root div[class*="bg-gray-800"] {
     display: none !important;
 }
 
-/* 2. Заставляем внутренний контейнер js-dos занять всю площадь */
 .jsdos-root > .flex-col.flex-grow {
     flex: 1 1 0% !important;
     width: 100% !important;
@@ -58,7 +57,7 @@
     background: #000 !important;
 }
 
-/* 3. САМОЕ ВАЖНОЕ: Убиваем inline-стили canvas (top, left, width, height) */
+/* Убиваем inline-стили canvas */
 .jsdos-root canvas {
     position: absolute !important;
     top: 50% !important;
@@ -76,7 +75,62 @@
     display: block !important;
 }
 
-/* Наш оверлей загрузки (скрывается по hidden) */
+/* Скрываем надпись о захвате мыши и серый фон слева */
+.jsdos-root .absolute.pointer-events-none,
+.jsdos-root .absolute.bg-black\/70 {
+    display: none !important;
+}
+.jsdos-root .w-14.flex-shrink-0,
+.jsdos-root .background-image {
+    display: none !important;
+}
+
+/* ============================================================
+   ВЫДВИЖНАЯ БОКОВАЯ ПАНЕЛЬ (как в index.html-примере)
+   ============================================================ */
+.jsdos-root .sidebar {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    height: 100% !important;
+    width: 56px !important;
+    z-index: 50 !important;
+
+    transform: translateX(calc(-100% + 3px));
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    background-color: transparent !important;
+    border-right: 3px solid #f80 !important;
+    box-shadow: none !important;
+    cursor: pointer;
+}
+
+.jsdos-root .sidebar:hover {
+    transform: translateX(0);
+    background-color: #1a1a1a !important;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.5) !important;
+}
+
+.jsdos-root .window {
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    left: 0 !important;
+    width: 100% !important;
+}
+
+.jsdos-root.sidebar-open .window {
+    left: 56px !important;
+    width: calc(100% - 56px) !important;
+}
+
+/* Кнопки сайдбара — акцентный цвет */
+.jsdos-root .sidebar button,
+.jsdos-root .sidebar .save-button {
+    color: #f80 !important;
+    opacity: 1 !important;
+}
+
+/* Оверлей загрузки */
 .jsdos-loading {
     position: absolute;
     inset: 0;
@@ -89,9 +143,7 @@
     z-index: 10;
 }
 
-.jsdos-loading.hidden {
-    display: none !important;
-}
+.jsdos-loading.hidden { display: none !important; }
 
 .jsdos-loading .spinner {
     width: 50px;
@@ -111,6 +163,15 @@
 #jsdosViewerModal .modal-footer {
     padding: 8px 16px;
     background: #181825;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#jsdosViewerModal .modal-footer span {
+    flex: 1;
+    color: #a6adc8;
+    font-size: 12px;
 }
 
 #jsdosViewerModal .modal-footer button {
@@ -124,10 +185,6 @@
     color: #1e1e2e;
 }
 
-#jsdosViewerModal .modal-footer button:hover {
-    background: #74c7ec;
-}
+#jsdosViewerModal .modal-footer button:hover { background: #74c7ec; }
 
-.wm-window .jsdos-root {
-    min-height: 200px;
-}
+.wm-window .jsdos-root { min-height: 200px; }

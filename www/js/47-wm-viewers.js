@@ -14,6 +14,12 @@
 //   • _mountPdfViewer(win, props)     — PDF (PDFObject)
 //   • _mountVideoViewer(win, props)   — видео
 //   • _mountBrowserViewer(win, props) — встроенный браузер
+//
+// ВАЖНО (баг-fix):
+//   Раньше _finalizeViewer для JSDOS вызывал только instance.stop()
+//   без suspend/mute и без exit(). Из-за этого звук эмулятора мог
+//   продолжаться после закрытия WM-окна. Теперь делегируем
+//   FAR.WM._stopJsdos(win) — он делает sync-silence + async exit.
 // ============================================================
 
 // ------------------------------------------------------------
@@ -126,7 +132,8 @@ FAR.WM._stopEmulatorInWin = function (win) {
 
 /**
  * Освобождает все ресурсы окна-просмотрщика:
- *  • останавливает JSDOS / EmulatorJS (включая AudioContext);
+ *  • останавливает JSDOS (через _stopJsdos — sync-silence + exit);
+ *  • останавливает EmulatorJS (включая AudioContext);
  *  • уничтожает Pannellum-вьюер;
  *  • уничтожает API встроенного браузера;
  *  • удаляет виртуальный джойстик;
@@ -144,10 +151,28 @@ FAR.WM._finalizeViewer = function (win) {
         }
     }
 
-    // JSDOS
+    // JSDOS — делегируем _stopJsdos (он делает sync-silence + exit
+    // + close AudioContext). Это фиксит баг, когда звук продолжал
+    // играть после закрытия окна.
     if (win.props._jsdosInstance) {
-        try { win.props._jsdosInstance.stop(); } catch (e) {}
-        win.props._jsdosInstance = null;
+        try {
+            if (typeof FAR.WM._stopJsdos === 'function') {
+                FAR.WM._stopJsdos(win);
+            } else {
+                // Fallback: если _stopJsdos не определён (не должен
+                // случиться в нормальной сборке)
+                const ci = win.props._jsdosInstance;
+                if (typeof FAR._hardSilenceJsdos === 'function') {
+                    try { FAR._hardSilenceJsdos(ci, win.bodyEl); } catch (e) {}
+                }
+                try { if (typeof ci.stop === 'function') ci.stop(); } catch (e) {}
+                try { if (typeof ci.exit === 'function') ci.exit(); } catch (e) {}
+                win.props._jsdosInstance = null;
+            }
+        } catch (e) {
+            console.warn('[WM _finalizeViewer] _stopJsdos failed:', e);
+            win.props._jsdosInstance = null;
+        }
     }
 
     // NES
